@@ -18,6 +18,33 @@ export type VerifyResult =
   | { readonly ok: true; readonly claims: TokenClaims }
   | { readonly ok: false; readonly reason: JwtReason; readonly detail?: string };
 
+type HeaderOk = { readonly kind: 'header'; readonly kid: string };
+type KeysOk = { readonly kind: 'keys'; readonly keys: unknown[] };
+type PayloadOk = { readonly kind: 'payload'; readonly payload: Record<string, unknown> };
+
+/** Maps a jose error code to a Bastion reason. Unknown codes are BAD_SIG. */
+function reasonForJoseError(code: string | undefined, name: string | undefined): {
+  reason: JwtReason;
+  detail?: string;
+} {
+  switch (code ?? name) {
+    case 'ERR_JWT_EXPIRED':
+      return { reason: JWT_REASON.EXPIRED };
+    case 'ERR_JWT_CLAIM_VALIDATION_FAILED':
+      return { reason: JWT_REASON.BAD_AUD };
+    case 'ERR_JWT_CLAIM_VALIDATION_FAILED_ISS':
+    case 'ERR_JWT_CLAIM_VALIDATION_FAILED_ISSUER':
+      return { reason: JWT_REASON.BAD_ISSUER };
+    case 'ERR_JWS_SIGNATURE_VERIFICATION_FAILED':
+      return { reason: JWT_REASON.BAD_SIG };
+    case 'ERR_JWS_INVALID':
+    case 'ERR_JWT_INVALID':
+      return { reason: JWT_REASON.MALFORMED };
+    default:
+      return { reason: JWT_REASON.BAD_SIG, detail: String(code ?? name) };
+  }
+}
+
 /**
  * Verifies a user token end to end:
  *  1. Parse the header and reject a token with no `kid`.
@@ -39,13 +66,13 @@ export class TokenVerifier {
     }
 
     const header = this.readHeader(token);
-    if ('reason' in header) return header;
+    if ('ok' in header) return header;
 
     const keys = await this.loadKeys();
-    if ('reason' in keys) return keys;
+    if ('ok' in keys) return keys;
 
     const verified = await this.verifySignature(token, keys.keys);
-    if ('reason' in verified) return verified;
+    if ('ok' in verified) return verified;
 
     const claims = validateClaims(verified.payload, {
       expectedAudience: this.options.expectedAudience,
@@ -57,21 +84,22 @@ export class TokenVerifier {
     return this.claimReplay(claims.claims);
   }
 
-  private readHeader(token: string): { kid: string } | VerifyResult {
+  private readHeader(token: string): HeaderOk | VerifyResult {
     try {
       const kid = decodeProtectedHeader(token).kid;
       if (typeof kid !== 'string' || kid.length === 0) {
         return { ok: false, reason: JWT_REASON.MALFORMED, detail: 'kid' };
       }
-      return { kid };
+      return { kind: 'header', kid };
     } catch {
       return { ok: false, reason: JWT_REASON.MALFORMED, detail: 'header' };
     }
   }
 
-  private async loadKeys(): Promise<{ keys: unknown[] } | VerifyResult> {
+  private async loadKeys(): Promise<KeysOk | VerifyResult> {
     try {
-      return (await this.options.jwks.localResolver()) as { keys: unknown[] };
+      const resolved = await this.options.jwks.localResolver();
+      return { kind: 'keys', keys: resolved.keys };
     } catch (err) {
       if (err instanceof JwksUnavailableError) {
         return { ok: false, reason: JWT_REASON.JWKS_UNAVAILABLE };
@@ -83,25 +111,19 @@ export class TokenVerifier {
   private async verifySignature(
     token: string,
     keys: unknown[],
-  ): Promise<{ payload: Record<string, unknown> } | VerifyResult> {
+  ): Promise<PayloadOk | VerifyResult> {
     try {
-      const result = await jwtVerify(token, createLocalJWKSet(keys as never), {
+      const result = await jwtVerify(token, createLocalJWKSet({ keys } as never), {
         currentDate: this.options.clock.now(),
         clockTolerance: 0,
         issuer: this.options.expectedIssuer,
         audience: this.options.expectedAudience,
       } as never);
-      return { payload: result.payload as Record<string, unknown> };
+      return { kind: 'payload', payload: result.payload as Record<string, unknown> };
     } catch (err) {
-      const name = (err as { code?: string }).code ?? (err as Error).name;
-      if (name === 'ERR_JWT_EXPIRED') return { ok: false, reason: JWT_REASON.EXPIRED };
-      if (name === 'ERR_JWT_CLAIM_VALIDATION_FAILED') {
-        return { ok: false, reason: JWT_REASON.BAD_AUD };
-      }
-      if (name === 'ERR_JWS_SIGNATURE_VERIFICATION_FAILED') {
-        return { ok: false, reason: JWT_REASON.BAD_SIG };
-      }
-      return { ok: false, reason: JWT_REASON.BAD_SIG, detail: String(name) };
+      const code = (err as { code?: string }).code;
+      const name = (err as Error).name;
+      return { ok: false, ...reasonForJoseError(code, name) };
     }
   }
 
@@ -109,6 +131,7 @@ export class TokenVerifier {
     const claimed = this.options.replay.claim(claims.jti, claims.exp);
     if (claimed === 'replayed') return { ok: false, reason: JWT_REASON.REPLAYED };
     if (claimed === 'too-full') {
+      // No dedicated reason exists; fail closed and surface the cause in detail.
       return { ok: false, reason: JWT_REASON.JWKS_UNAVAILABLE, detail: 'replay-cache-full' };
     }
     return { ok: true, claims };
