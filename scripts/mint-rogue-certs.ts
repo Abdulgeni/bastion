@@ -1,91 +1,58 @@
-#!/usr/bin/env node
+import { copyFileSync, mkdirSync } from 'node:fs';
+import { dirname } from 'node:path';
+import { spiffeIdFor } from '../libs/bastion-common/src/identity/spiffe';
+import { createSelfSigned, issueLeaf, type Credential, type LeafOptions } from './pki/issue';
+import { readCliOptions, runCli, type PkiOptions } from './pki/cli-options';
+import { pkiPaths, readCaSigner, writePrivate, writePublic, type PkiPaths } from './pki/layout';
+
+export const ROGUE_SPIFFE_ID = 'spiffe://rogue.local/services/rogue';
+
+export interface RogueResult {
+  readonly dir: string;
+  /** The identity the self-signed cert claims (edge's), to show a claim alone is not enough. */
+  readonly selfSignedClaims: string;
+  /** The identity on the CA-signed cert from the wrong trust domain. */
+  readonly wrongIdClaims: string;
+}
+
+function writeCredential(paths: PkiPaths, kind: 'self-signed' | 'wrong-id', cred: Credential): void {
+  writePrivate(paths.rogueFile(kind, 'key.pem'), cred.keyPem);
+  writePublic(paths.rogueFile(kind, 'cert.pem'), cred.certPem);
+}
+
 /**
- * Mint the rogue certs used by `make demo-rogue` (Step 7).
- *
- * Produces:
- *   var/rogue/self-signed.{pem,key}      -- a self-signed leaf, trusted by nobody
- *   var/rogue/wrong-spiffe.{pem,key}     -- CA-signed, but URI SAN is rogue.local
- *
- * The second simulates a stolen or misissued cert that chains to the real CA
- * but claims a foreign identity. Only `checkPeer` (post-handshake) can deny it.
+ * Mints the two attacker credentials for the rogue demo into var/rogue/:
+ *  - self-signed/: a self-signed cert claiming edge's SPIFFE ID (rejected at the CA check);
+ *  - wrong-id/: a cert signed by the REAL dev CA but for spiffe://rogue.local/... (a stolen
+ *    or mis-issued cert: valid chain, wrong identity).
+ * var/rogue/ also gets a copy of the public CA cert so the rogue can verify servers.
+ * It never contains the CA private key.
  */
-import { readFile } from 'node:fs/promises';
-import { join } from 'node:path';
-import { parseArgs } from 'node:util';
-import { createPrivateKey, randomBytes, webcrypto } from 'node:crypto';
-import { issueLeaf, parseCert, selfSignedLeaf } from './lib/cert-utils';
-import { writeFileAtomic, ensureDir } from './lib/fs-utils';
-import { deriveSeed, deriveSerial, keyPairFromSeed } from './lib/seed';
-
-const VAR_DIR = process.env.BASTION_VAR_DIR ?? 'var';
-const ROGUE_DIR = join(VAR_DIR, 'rogue');
-const ROGUE_SERVICE = 'rogue';
-const ROGUE_URI = 'spiffe://rogue.local/services/rogue';
-const SELF_SIGNED_URI = 'spiffe://bastion.local/services/rogue';
-const KEY_MODE = 0o600;
-const CERT_MODE = 0o644;
-
-function readOptions(): { seed?: string; nowMs: number } {
-  const { values } = parseArgs({
-    options: { seed: { type: 'string' }, now: { type: 'string' } },
-    allowPositionals: false,
-  });
-  const nowMs = values.now ? Date.parse(values.now) : Date.now();
-  if (!Number.isFinite(nowMs)) throw new Error(`--now must be ISO 8601, got ${values.now}`);
-  return { seed: values.seed, nowMs };
-}
-
-async function loadCaKey(): Promise<webcrypto.CryptoKey> {
-  const keyPem = await readFile(join(VAR_DIR, 'ca', 'ca.key'), 'utf8');
-  const keyObject = createPrivateKey(keyPem);
-  const pkcs8 = keyObject.export({ type: 'pkcs8', format: 'der' }) as Buffer;
-  return webcrypto.subtle.importKey('pkcs8', pkcs8, { name: 'Ed25519' }, true, ['sign']);
-}
-
-function seedOrRandom(master: string | undefined, label: string): Buffer {
-  return master ? deriveSeed(master, label) : randomBytes(32);
-}
-
-function serialOrRandom(master: string | undefined, label: string): string {
-  return master ? deriveSerial(master, label) : `01${randomBytes(8).toString('hex')}`;
+export async function mintRogueCerts(opts: PkiOptions): Promise<RogueResult> {
+  const paths = pkiPaths(opts.varDir);
+  const ca = await readCaSigner(paths, opts.clock);
+  const ttlMs = opts.certTtlHours * 3_600_000;
+  const edgeId = spiffeIdFor(opts.trustDomain, 'edge');
+  const forged: LeafOptions = {
+    commonName: 'edge', spiffeId: edgeId, dnsNames: ['edge'], ipAddresses: [], ttlMs,
+  };
+  const stolen: LeafOptions = {
+    commonName: 'rogue', spiffeId: ROGUE_SPIFFE_ID, dnsNames: ['rogue'], ipAddresses: [], ttlMs,
+  };
+  writeCredential(paths, 'self-signed', await createSelfSigned(opts, forged));
+  writeCredential(paths, 'wrong-id', await issueLeaf(opts, ca, stolen));
+  const caCopy = `${paths.rogueDir}/ca.pem`;
+  mkdirSync(dirname(caCopy), { recursive: true });
+  copyFileSync(paths.caCert, caCopy);
+  return { dir: paths.rogueDir, selfSignedClaims: edgeId, wrongIdClaims: ROGUE_SPIFFE_ID };
 }
 
 async function main(): Promise<void> {
-  const opts = readOptions();
-  const caPem = await readFile(join(VAR_DIR, 'ca', 'ca.pem'), 'utf8');
-  const caCert = parseCert(caPem);
-  const caKey = await loadCaKey();
-
-  await ensureDir(ROGUE_DIR);
-  const notBefore = new Date(opts.nowMs - 60_000);
-  const notAfter = new Date(opts.nowMs + 90 * 86_400_000);
-
-  const selfPair = await keyPairFromSeed(seedOrRandom(opts.seed, 'rogue:self'));
-  const selfSigned = await selfSignedLeaf(selfPair, {
-    service: ROGUE_SERVICE,
-    uri: SELF_SIGNED_URI,
-    notBefore,
-    notAfter,
-    serialHex: serialOrRandom(opts.seed, 'rogue:self'),
-  });
-  await writeFileAtomic(join(ROGUE_DIR, 'self-signed.pem'), selfSigned.certPem, CERT_MODE);
-  await writeFileAtomic(join(ROGUE_DIR, 'self-signed.key'), selfSigned.keyPem, KEY_MODE);
-
-  const wrongPair = await keyPairFromSeed(seedOrRandom(opts.seed, 'rogue:wrong-spiffe'));
-  const wrong = await issueLeaf({ cert: caCert, key: caKey }, wrongPair, {
-    service: ROGUE_SERVICE,
-    uri: ROGUE_URI,
-    notBefore,
-    notAfter,
-    serialHex: serialOrRandom(opts.seed, 'rogue:wrong-spiffe'),
-  });
-  await writeFileAtomic(join(ROGUE_DIR, 'wrong-spiffe.pem'), wrong.certPem, CERT_MODE);
-  await writeFileAtomic(join(ROGUE_DIR, 'wrong-spiffe.key'), wrong.keyPem, KEY_MODE);
-
-  process.stdout.write(`rogue certs written under ${ROGUE_DIR}\n`);
+  const opts = readCliOptions(process.env, process.argv.slice(2));
+  const r = await mintRogueCerts(opts);
+  process.stdout.write(`rogue credentials written to ${r.dir}\n`);
+  process.stdout.write(`  self-signed/ claims ${r.selfSignedClaims}\n`);
+  process.stdout.write(`  wrong-id/    claims ${r.wrongIdClaims} (signed by the real CA)\n`);
 }
 
-main().catch((err: unknown) => {
-  process.stderr.write(`mint-rogue-certs failed: ${(err as Error).message}\n`);
-  process.exit(1);
-});
+if (require.main === module) runCli(main);

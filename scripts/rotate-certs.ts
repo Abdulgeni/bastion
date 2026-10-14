@@ -1,29 +1,25 @@
-#!/usr/bin/env node
+import { SERVICE_NAMES, type ServiceName } from '../libs/bastion-common/src/config/config';
+import { issueService } from './gen-certs';
+import { readCliOptions, runCli, type PkiOptions } from './pki/cli-options';
+import { pkiPaths, readCaSigner } from './pki/layout';
+
 /**
- * Re-issue per-service leaf certificates, leaving the CA untouched.
- *
- * Usage:
- *   ts-node scripts/rotate-certs.ts [--seed HEX] [--now ISO8601]
- *
- * Runs `gen-certs.ts --force` against the existing CA. If the CA is missing
- * this exits nonzero; run `gen-certs.ts` first.
+ * Re-issues every service certificate with a fresh key, signed by the existing CA.
+ * The CA files are only read, never written. Services pick the new files up on restart.
  */
-import { existsSync } from 'node:fs';
-import { spawn } from 'node:child_process';
-import { join, resolve } from 'node:path';
-
-const here = __dirname;
-const genScript = resolve(here, 'gen-certs.ts');
-
-function main(): void {
-  const caPath = join(process.env.BASTION_VAR_DIR ?? 'var', 'ca', 'ca.pem');
-  if (!existsSync(caPath)) {
-    process.stderr.write(`no CA at ${caPath}; run gen-certs.ts first\n`);
-    process.exit(1);
+export async function rotateServiceCerts(opts: PkiOptions): Promise<readonly ServiceName[]> {
+  const paths = pkiPaths(opts.varDir);
+  const ca = await readCaSigner(paths, opts.clock);
+  for (const service of SERVICE_NAMES) {
+    await issueService(paths, ca, opts, service);
   }
-  const args = ['ts-node', genScript, '--force', ...process.argv.slice(2)];
-  const child = spawn('pnpm', args, { stdio: 'inherit', shell: process.platform === 'win32' });
-  child.on('exit', (code) => process.exit(code ?? 1));
+  return SERVICE_NAMES;
 }
 
-main();
+async function main(): Promise<void> {
+  const opts = readCliOptions(process.env, process.argv.slice(2));
+  const rotated = await rotateServiceCerts(opts);
+  process.stdout.write(`rotated: ${rotated.join(', ')} (CA untouched; restart services to load them)\n`);
+}
+
+if (require.main === module) runCli(main);
