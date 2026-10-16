@@ -10,7 +10,9 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "gen-certs": "ts-node scripts/gen-certs.ts",
     "rotate-certs": "ts-node scripts/rotate-certs.ts",
-    "mint-rogue-certs": "ts-node scripts/mint-rogue-certs.ts"
+    "mint-rogue-certs": "ts-node scripts/mint-rogue-certs.ts",
+    "rotate-jwt": "ts-node scripts/rotate-jwt.ts",
+    "forge-token": "ts-node scripts/forge-token.ts"
   },
   "devDependencies": {
     "@peculiar/x509": "^1.11.0",

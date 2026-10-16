@@ -131,8 +131,8 @@ export class TokenVerifier {
     const claimed = this.options.replay.claim(claims.jti, claims.exp);
     if (claimed === 'replayed') return { ok: false, reason: JWT_REASON.REPLAYED };
     if (claimed === 'too-full') {
-      // No dedicated reason exists; fail closed and surface the cause in detail.
-      return { ok: false, reason: JWT_REASON.JWKS_UNAVAILABLE, detail: 'replay-cache-full' };
+      // Distinct reason so operators can tell capacity pressure from a JWKS outage.
+      return { ok: false, reason: JWT_REASON.REPLAY_CACHE_FULL };
     }
     return { ok: true, claims };
   }
