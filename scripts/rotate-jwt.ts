@@ -15,6 +15,9 @@ type JwtKeyOptions = Pick<PkiOptions, 'varDir' | 'random' | 'clock'>;
 /** TTL of a token plus its grace window: how long a retired key stays on disk. */
 const RETIREMENT_WINDOW_SECONDS = 300 + 60;
 
+/** Name of the marker file that names the current signing kid. */
+const CURRENT_KID_FILE = 'current';
+
 function jwtDir(varDir: string): string {
   return join(varDir, 'jwt');
 }
@@ -26,6 +29,14 @@ function listKeyIds(dir: string): string[] {
     .filter((n) => n.endsWith('.pem'))
     .map((n) => n.slice(0, -'.pem'.length))
     .sort();
+}
+
+/** Reads `<dir>/current` if it names one of the kids currently on disk. */
+function readCurrentKid(dir: string): string | undefined {
+  const path = join(dir, CURRENT_KID_FILE);
+  if (!existsSync(path)) return undefined;
+  const kid = readFileSync(path, 'utf8').trim();
+  return /^[A-Za-z0-9_-]{1,64}$/.test(kid) ? kid : undefined;
 }
 
 /** Reads `retired.json` (kid → retiredAtSec) if present, else an empty map. */
@@ -46,18 +57,30 @@ function readRetired(dir: string): Record<string, number> {
 }
 
 /**
- * Generates a fresh active JWT signing key under `var/jwt/`, retires the
- * previous one, and prunes keys whose tokens can no longer be alive. Returns
- * the new kid and (if any) the previous one. Does not touch the CA.
+ * The kid that is currently signing. Uses the marker file when present, then
+ * falls back to the lexicographically largest filename for hand-built rings.
+ */
+function currentKid(dir: string): string | undefined {
+  const marker = readCurrentKid(dir);
+  if (marker !== undefined) return marker;
+  return listKeyIds(dir).at(-1);
+}
+
+/**
+ * Generates a fresh active JWT signing key under `var/jwt/`, marks it as
+ * current, retires the previous one, and prunes keys whose tokens can no
+ * longer be alive. Returns the new kid and (if any) the previous one. Does
+ * not touch the CA.
  */
 export function rotateJwtKey(opts: JwtKeyOptions): RotateJwtResult {
   const dir = jwtDir(opts.varDir);
-  const previous = listKeyIds(dir).at(-1);
+  const previous = currentKid(dir);
   const { kid, pem } = generateSigningKeyPem(opts.random);
   const nowSec = Math.floor(opts.clock.nowMs() / 1000);
 
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, `${kid}.pem`), pem, { mode: 0o600 });
+  writeFileSync(join(dir, CURRENT_KID_FILE), `${kid}\n`, { mode: 0o600 });
 
   const retired = readRetired(dir);
   const out: Record<string, number> = {};
@@ -76,7 +99,8 @@ export function ensureJwtKeyRing(opts: JwtKeyOptions): { created: boolean; kid: 
   const dir = jwtDir(opts.varDir);
   const existing = listKeyIds(dir);
   if (existing.length > 0) {
-    return { created: false, kid: existing.at(-1) as string };
+    const kid = currentKid(dir) as string;
+    return { created: false, kid };
   }
   return { created: true, kid: rotateJwtKey(opts).kid };
 }
