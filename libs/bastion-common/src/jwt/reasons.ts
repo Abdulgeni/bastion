@@ -11,6 +11,7 @@ export const JWT_REASON = {
   REPLAYED: 'jwt+replayed',
   MISSING_SCOPE: 'scope+missing',
   JWKS_UNAVAILABLE: 'jwks+unavailable',
+  REPLAY_CACHE_FULL: 'replay+cache_full',
 } as const;
 
 export type JwtReason = (typeof JWT_REASON)[keyof typeof JWT_REASON];
@@ -26,8 +27,14 @@ export type JwtOutcome =
   | 'bad_aud'
   | 'bad_issuer'
   | 'replayed'
-  | 'jwks_unavailable';
+  | 'jwks_unavailable'
+  | 'replay_cache_full';
 
+/**
+ * Reason → outcome mapping. `JWKS_UNAVAILABLE` and `REPLAY_CACHE_FULL` are
+ * both 503s: they say "we could not decide", not "the token is bad", but
+ * they carry distinct metric labels so an operator can tell them apart.
+ */
 export const JWT_OUTCOME_BY_REASON: Readonly<Record<JwtReason, JwtOutcome>> = {
   [JWT_REASON.OK]: 'ok',
   [JWT_REASON.MISSING]: 'missing',
@@ -40,6 +47,7 @@ export const JWT_OUTCOME_BY_REASON: Readonly<Record<JwtReason, JwtOutcome>> = {
   [JWT_REASON.REPLAYED]: 'replayed',
   [JWT_REASON.MISSING_SCOPE]: 'malformed',
   [JWT_REASON.JWKS_UNAVAILABLE]: 'jwks_unavailable',
+  [JWT_REASON.REPLAY_CACHE_FULL]: 'replay_cache_full',
 };
 
 /** Scopes Bastion defines. Each endpoint declares one. */
@@ -50,3 +58,12 @@ export const SCOPES = {
 } as const;
 
 export type Scope = (typeof SCOPES)[keyof typeof SCOPES];
+
+/**
+ * The audit reason for a missing scope, e.g. `scope+missing:payments:charge`.
+ * Distinct from `JWT_REASON.MISSING_SCOPE` (bare) so an audit event can name
+ * exactly which scope was absent.
+ */
+export function scopeMissingReason(scope: string): string {
+  return `${JWT_REASON.MISSING_SCOPE}:${scope}`;
+}
