@@ -16,6 +16,9 @@ export const TOKEN_TTL_SECONDS = 300;
 /** Extra seconds a retired key stays published after its last possible token expires. */
 export const KEY_GRACE_SECONDS = 60;
 
+/** Name of the marker file that names the current signing kid. */
+const CURRENT_KID_FILE = 'current';
+
 /**
  * One signing key Bastion can mint tokens with.
  *
@@ -37,11 +40,14 @@ export interface SigningKey {
  * tokens signed with older keys keep verifying until they expire.
  *
  * Filesystem layout: `<varDir>/jwt/<kid>.pem`, PKCS#8 PEM, one file per key.
- * The current key is selected by `currentKid`, or the lexicographically
- * largest filename by default.
  *
- * The retirement timestamps are held **outside** the `.pem` files, in a
- * sibling `retired.json`, because PEM files have no room for metadata.
+ * The current kid is selected, in order of precedence:
+ *   1. The `currentKid` argument to `load()`.
+ *   2. The `current` marker file written by `rotate-jwt`.
+ *   3. The lexicographically largest filename (fallback for hand-built rings).
+ *
+ * The retirement timestamps live in a sibling `retired.json` because PEM files
+ * have no room for metadata.
  */
 export class JwtKeyStore {
   private constructor(
@@ -61,7 +67,7 @@ export class JwtKeyStore {
       const signingKey = await loadSigningKey(kid, pem, retired[kid]);
       keys.set(kid, signingKey);
     }
-    const chosen = currentKid ?? [...keys.keys()].sort().at(-1);
+    const chosen = await pickCurrentKid(dir, currentKid, keys);
     if (chosen === undefined || !keys.has(chosen)) {
       throw new ConfigError([
         `BASTION_JWT_CURRENT_KID=${currentKid ?? '(unset)'} not found in ${dir}`,
@@ -87,6 +93,32 @@ export class JwtKeyStore {
   /** Lookup by kid; used by the verifier for a token's `kid` header. */
   get(kid: string): SigningKey | undefined {
     return this.keys.get(kid);
+  }
+}
+
+/**
+ * Chooses the current kid. Precedence: explicit argument, then the marker file,
+ * then lexicographic fallback. Returns undefined only when the store is empty.
+ */
+async function pickCurrentKid(
+  dir: string,
+  explicit: string | undefined,
+  keys: ReadonlyMap<string, SigningKey>,
+): Promise<string | undefined> {
+  if (explicit !== undefined) return explicit;
+  const marker = await readCurrentKidFile(dir);
+  if (marker !== undefined && keys.has(marker)) return marker;
+  return [...keys.keys()].sort().at(-1);
+}
+
+/** Reads `<dir>/current` if it exists and holds a plausible kid. */
+async function readCurrentKidFile(dir: string): Promise<string | undefined> {
+  try {
+    const raw = await readFile(join(dir, CURRENT_KID_FILE), 'utf8');
+    const kid = raw.trim();
+    return /^[A-Za-z0-9_-]{1,64}$/.test(kid) ? kid : undefined;
+  } catch {
+    return undefined;
   }
 }
 
@@ -189,6 +221,12 @@ export function generateSigningKeyPem(random: RandomSource): { kid: string; pem:
 export async function writeSigningKeyPem(dir: string, kid: string, pem: string): Promise<void> {
   await mkdir(dir, { recursive: true });
   await writeFile(join(dir, `${kid}.pem`), pem, { mode: 0o600 });
+}
+
+/** Writes `<dir>/current` naming `kid`, with mode 0600. */
+export async function writeCurrentKid(dir: string, kid: string): Promise<void> {
+  await mkdir(dir, { recursive: true });
+  await writeFile(join(dir, CURRENT_KID_FILE), `${kid}\n`, { mode: 0o600 });
 }
 
 /**

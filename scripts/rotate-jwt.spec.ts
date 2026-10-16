@@ -39,7 +39,7 @@ describe('rotateJwtKey', () => {
     expect(readFileSync(join(dir, 'jwt', `${r.kid}.pem`), 'utf8')).toContain('BEGIN PRIVATE KEY');
   });
 
-  it('adds a new key and retires the previous one', async () => {
+  it('makes the newest key current by writing var/jwt/current', async () => {
     const dir = tmpVar();
     const opts = testOptions(dir, fixed('seq'));
     const a = rotateJwtKey(opts);
@@ -47,21 +47,30 @@ describe('rotateJwtKey', () => {
     expect(b.kid).not.toBe(a.kid);
     expect(b.previousKid).toBe(a.kid);
 
-    // The retired map names the first kid.
-    const retired = JSON.parse(
-      readFileSync(join(dir, 'jwt', 'retired.json'), 'utf8'),
-    ) as Record<string, number>;
-    expect(retired[a.kid]).toBe(Math.floor(FIXED_NOW / 1000));
-    expect(retired[b.kid]).toBeUndefined();
+    // The marker names b, regardless of lexicographic order.
+    expect(readFileSync(join(dir, 'jwt', 'current'), 'utf8').trim()).toBe(b.kid);
 
-    // Both keys are on disk and the store lists both. Which one is "current"
-    // is decided by JwtKeyStore's documented rule (lexicographically largest
-    // filename), not by rotation order, so we do not assert a specific kid.
+    // JwtKeyStore.load() honours the marker: b is the current signer.
     const store = await JwtKeyStore.load(dir);
+    expect(store.currentKid).toBe(b.kid);
     expect(store.all().map((k) => k.kid).sort()).toEqual([a.kid, b.kid].sort());
-    expect([a.kid, b.kid]).toContain(store.currentKid);
     expect(store.get(a.kid)).toBeDefined();
     expect(store.get(b.kid)).toBeDefined();
+  });
+
+  it('rotates the current key even when the new kid sorts before the old one', async () => {
+    const dir = tmpVar();
+    const opts = testOptions(dir, fixed('order'));
+    // Rotate several times; the marker must always name the newest kid,
+    // independent of where that kid sorts in the filename listing.
+    let previous = rotateJwtKey(opts).kid;
+    for (let i = 0; i < 5; i++) {
+      const now = rotateJwtKey(opts).kid;
+      expect(now).not.toBe(previous);
+      const store = await JwtKeyStore.load(dir);
+      expect(store.currentKid).toBe(now);
+      previous = now;
+    }
   });
 
   it('prunes keys whose tokens can no longer be alive', () => {
@@ -94,8 +103,9 @@ describe('rotateJwtKey', () => {
 
   it('produces a key store the verifier can resolve tokens against', async () => {
     const dir = tmpVar();
-    rotateJwtKey(testOptions(dir, fixed('e2e')));
+    const r = rotateJwtKey(testOptions(dir, fixed('e2e')));
     const store = await JwtKeyStore.load(dir);
+    expect(store.currentKid).toBe(r.kid);
     expect(store.current().publicJwk).toMatchObject({
       kty: 'OKP',
       crv: 'Ed25519',
