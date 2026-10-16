@@ -1,139 +1,117 @@
-import { createLocalJWKSet, decodeProtectedHeader, jwtVerify } from 'jose';
+import { compactVerify } from 'jose';
 import type { Clock } from '../clock/clock';
-import { validateClaims, type TokenClaims } from './claims';
-import { JwksCache, JwksUnavailableError } from './jwks-cache';
-import { JWT_REASON, type JwtReason } from './reasons';
-import { ReplayCache } from './replay-cache';
+import { ISSUER, TOKEN_TTL_SECONDS, parseClaims, type BastionClaims, type Scope } from './claims';
+import { JwksUnavailableError, UnknownKeyError, type KeySource } from './jwks-cache';
+import { JWT_REASON, scopeMissingReason, type JwtReason } from './reasons';
+import type { ReplayCache } from './replay-cache';
 
-export interface VerifyOptions {
-  readonly serviceName: string;
-  readonly expectedAudience: string;
-  readonly expectedIssuer: string;
+const MAX_TOKEN_LENGTH = 4096;
+const MAX_FUTURE_IAT_SECONDS = 60;
+const BEARER = /^Bearer ([A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)$/;
+const SIGNATURE_CODES: ReadonlySet<string> = new Set([
+  'ERR_JWS_SIGNATURE_VERIFICATION_FAILED',
+  'ERR_JOSE_ALG_NOT_ALLOWED',
+]);
+
+export type JwtResult =
+  | { readonly ok: true; readonly claims: BastionClaims; readonly kid: string }
+  | {
+      readonly ok: false;
+      readonly reason: JwtReason;
+      /** 401 for a bad token, 503 when we cannot decide (JWKS down, replay cache full). */
+      readonly status: 401 | 503;
+      /** Present only when the signature was valid, so it is safe to put in an audit event. */
+      readonly claims?: BastionClaims;
+    };
+
+export interface JwtVerifierOptions {
+  readonly keys: KeySource;
   readonly clock: Clock;
-  readonly jwks: JwksCache;
-  readonly replay: ReplayCache;
+  /** This service's name: it must appear in `aud`. Omit for edge, which does not check `aud`. */
+  readonly service?: string;
+  /** With `service`: every `jti` is single-use. Omit for edge, which never consumes a `jti`. */
+  readonly replayCache?: ReplayCache;
 }
 
-export type VerifyResult =
-  | { readonly ok: true; readonly claims: TokenClaims }
-  | { readonly ok: false; readonly reason: JwtReason; readonly detail?: string };
+function failure(reason: JwtReason, claims?: BastionClaims): JwtResult {
+  const status = reason === JWT_REASON.JWKS_UNAVAILABLE || reason === JWT_REASON.REPLAY_CACHE_FULL ? 503 : 401;
+  return claims ? { ok: false, reason, status, claims } : { ok: false, reason, status };
+}
 
-type HeaderOk = { readonly kind: 'header'; readonly kid: string };
-type KeysOk = { readonly kind: 'keys'; readonly keys: unknown[] };
-type PayloadOk = { readonly kind: 'payload'; readonly payload: Record<string, unknown> };
+function classifySignatureError(err: unknown): JwtReason {
+  if (err instanceof JwksUnavailableError) return JWT_REASON.JWKS_UNAVAILABLE;
+  if (err instanceof UnknownKeyError) return JWT_REASON.BAD_SIG;
+  const code = (err as { code?: unknown } | null)?.code;
+  return typeof code === 'string' && SIGNATURE_CODES.has(code) ? JWT_REASON.BAD_SIG : JWT_REASON.MALFORMED;
+}
 
-/** Maps a jose error code to a Bastion reason. Unknown codes are BAD_SIG. */
-function reasonForJoseError(code: string | undefined, name: string | undefined): {
-  reason: JwtReason;
-  detail?: string;
-} {
-  switch (code ?? name) {
-    case 'ERR_JWT_EXPIRED':
-      return { reason: JWT_REASON.EXPIRED };
-    case 'ERR_JWT_CLAIM_VALIDATION_FAILED':
-      return { reason: JWT_REASON.BAD_AUD };
-    case 'ERR_JWT_CLAIM_VALIDATION_FAILED_ISS':
-    case 'ERR_JWT_CLAIM_VALIDATION_FAILED_ISSUER':
-      return { reason: JWT_REASON.BAD_ISSUER };
-    case 'ERR_JWS_SIGNATURE_VERIFICATION_FAILED':
-      return { reason: JWT_REASON.BAD_SIG };
-    case 'ERR_JWS_INVALID':
-    case 'ERR_JWT_INVALID':
-      return { reason: JWT_REASON.MALFORMED };
-    default:
-      return { reason: JWT_REASON.BAD_SIG, detail: String(code ?? name) };
+function decodePayload(bytes: Uint8Array): BastionClaims | undefined {
+  try {
+    return parseClaims(JSON.parse(Buffer.from(bytes).toString('utf8')));
+  } catch {
+    return undefined;
   }
 }
 
-/**
- * Verifies a user token end to end:
- *  1. Parse the header and reject a token with no `kid`.
- *  2. Fetch a fresh-enough JWKS; unreachable JWKS fails closed with a distinct
- *     `jwks+unavailable` reason so the caller can return 503.
- *  3. Verify the signature against the JWKS by `kid`.
- *  4. Structural + temporal + audience validation via `validateClaims`.
- *  5. Single-use `jti` claim on the per-service replay cache.
- *
- * `currentDate` in jwtVerify is pulled from the injected Clock, so tests can
- * control time without touching the system clock.
- */
-export class TokenVerifier {
-  constructor(private readonly options: VerifyOptions) {}
+/** Extracts the token from an `Authorization: Bearer <jwt>` header, or undefined if it is not that shape. */
+export function extractBearerToken(header: string | undefined): string | undefined {
+  if (typeof header !== 'string' || header.length > MAX_TOKEN_LENGTH + 7) return undefined;
+  return BEARER.exec(header)?.[1];
+}
 
-  async verify(token: string | undefined): Promise<VerifyResult> {
-    if (!token || token.trim().length === 0) {
-      return { ok: false, reason: JWT_REASON.MISSING };
-    }
+/** Whether verified claims carry `required`. A denial is HTTP 403 with the given reason. */
+export function checkScope(
+  claims: BastionClaims,
+  required: Scope,
+): { readonly ok: true } | { readonly ok: false; readonly reason: string; readonly status: 403 } {
+  return claims.scope.includes(required)
+    ? { ok: true }
+    : { ok: false, reason: scopeMissingReason(required), status: 403 };
+}
 
-    const header = this.readHeader(token);
-    if ('ok' in header) return header;
-
-    const keys = await this.loadKeys();
-    if ('ok' in keys) return keys;
-
-    const verified = await this.verifySignature(token, keys.keys);
-    if ('ok' in verified) return verified;
-
-    const claims = validateClaims(verified.payload, {
-      expectedAudience: this.options.expectedAudience,
-      expectedIssuer: this.options.expectedIssuer,
-      clock: this.options.clock,
-    });
-    if (!claims.ok) return claims;
-
-    return this.claimReplay(claims.claims);
-  }
-
-  private readHeader(token: string): HeaderOk | VerifyResult {
-    try {
-      const kid = decodeProtectedHeader(token).kid;
-      if (typeof kid !== 'string' || kid.length === 0) {
-        return { ok: false, reason: JWT_REASON.MALFORMED, detail: 'kid' };
-      }
-      return { kind: 'header', kid };
-    } catch {
-      return { ok: false, reason: JWT_REASON.MALFORMED, detail: 'header' };
+/** Verifies Bastion tokens independently of whoever forwarded them. */
+export class JwtVerifier {
+  constructor(private readonly opts: JwtVerifierOptions) {
+    if (opts.replayCache && !opts.service) {
+      throw new RangeError('a replay cache needs a service name');
     }
   }
 
-  private async loadKeys(): Promise<KeysOk | VerifyResult> {
+  /** Checks signature, claims, expiry, audience and (if configured) single use, in that order. */
+  async verify(token: string): Promise<JwtResult> {
+    if (typeof token !== 'string' || token.length === 0 || token.length > MAX_TOKEN_LENGTH) {
+      return failure(JWT_REASON.MALFORMED);
+    }
+    let verified;
     try {
-      const resolved = await this.options.jwks.localResolver();
-      return { kind: 'keys', keys: resolved.keys };
+      verified = await compactVerify(token, (header) => this.opts.keys.keyFor(header.kid), {
+        algorithms: ['EdDSA'],
+      });
     } catch (err) {
-      if (err instanceof JwksUnavailableError) {
-        return { ok: false, reason: JWT_REASON.JWKS_UNAVAILABLE };
-      }
-      return { ok: false, reason: JWT_REASON.JWKS_UNAVAILABLE };
+      return failure(classifySignatureError(err));
     }
+    const claims = decodePayload(verified.payload);
+    if (!claims) return failure(JWT_REASON.MALFORMED);
+    return this.checkClaims(claims, verified.protectedHeader.kid ?? '');
   }
 
-  private async verifySignature(
-    token: string,
-    keys: unknown[],
-  ): Promise<PayloadOk | VerifyResult> {
-    try {
-      const result = await jwtVerify(token, createLocalJWKSet({ keys } as never), {
-        currentDate: this.options.clock.now(),
-        clockTolerance: 0,
-        issuer: this.options.expectedIssuer,
-        audience: this.options.expectedAudience,
-      } as never);
-      return { kind: 'payload', payload: result.payload as Record<string, unknown> };
-    } catch (err) {
-      const code = (err as { code?: string }).code;
-      const name = (err as Error).name;
-      return { ok: false, ...reasonForJoseError(code, name) };
+  private checkClaims(claims: BastionClaims, kid: string): JwtResult {
+    const nowSec = this.opts.clock.nowSec();
+    const lifetime = claims.exp - claims.iat;
+    if (claims.iss !== ISSUER || lifetime <= 0 || lifetime > TOKEN_TTL_SECONDS) {
+      return failure(JWT_REASON.MALFORMED);
     }
-  }
-
-  private claimReplay(claims: TokenClaims): VerifyResult {
-    const claimed = this.options.replay.claim(claims.jti, claims.exp);
-    if (claimed === 'replayed') return { ok: false, reason: JWT_REASON.REPLAYED };
-    if (claimed === 'too-full') {
-      // No dedicated reason exists; fail closed and surface the cause in detail.
-      return { ok: false, reason: JWT_REASON.JWKS_UNAVAILABLE, detail: 'replay-cache-full' };
+    if (claims.iat > nowSec + MAX_FUTURE_IAT_SECONDS) return failure(JWT_REASON.MALFORMED);
+    if (nowSec >= claims.exp) return failure(JWT_REASON.EXPIRED, claims);
+    const { service, replayCache } = this.opts;
+    if (service !== undefined && !claims.aud.includes(service)) {
+      return failure(JWT_REASON.BAD_AUD, claims);
     }
-    return { ok: true, claims };
+    if (service !== undefined && replayCache) {
+      const used = replayCache.consume(service, claims.jti, claims.exp * 1000);
+      if (used === 'replayed') return failure(JWT_REASON.REPLAYED, claims);
+      if (used === 'full') return failure(JWT_REASON.REPLAY_CACHE_FULL, claims);
+    }
+    return { ok: true, claims, kid };
   }
 }

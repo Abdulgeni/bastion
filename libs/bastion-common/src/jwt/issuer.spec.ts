@@ -1,95 +1,74 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { jwtVerify } from 'jose';
 import { FakeClock } from '../clock/clock';
 import { SeededRandom } from '../random/random-source';
-import { keyPairFromSeed, privateKeyToPem } from '../../../../scripts/lib/seed';
-import { TokenIssuer } from './issuer';
-import { JwtKeyStore } from './key-store';
+import { JwtIssuer } from './issuer';
+import { generateSigningKey, rotateKeyRing, type KeyRing } from './key-ring';
+import { NOW } from './test-helpers';
 
-const NOW = 1_700_000_000;
-
-let dir: string;
-let store: JwtKeyStore;
-
-beforeAll(async () => {
-  dir = mkdtempSync(join(tmpdir(), 'bastion-issuer-'));
-  mkdirSync(join(dir, 'jwt'), { recursive: true });
-  for (const kid of ['k1', 'k2']) {
-    const seed = Buffer.alloc(32, kid === 'k1' ? 1 : 2);
-    const pair = await keyPairFromSeed(seed);
-    const pem = await privateKeyToPem(pair.privateKey);
-    writeFileSync(join(dir, 'jwt', `${kid}.pem`), pem, { flag: 'w' });
-  }
-  store = await JwtKeyStore.load(dir);
-});
-
-afterAll(() => {
-  rmSync(dir, { recursive: true, force: true });
-});
-
-function issuer(at = NOW): TokenIssuer {
-  return new TokenIssuer(store, new FakeClock(at * 1000), new SeededRandom('test-seed'));
+function fixture(seed = 's') {
+  const clock = new FakeClock(NOW);
+  const random = new SeededRandom(seed);
+  let ring: KeyRing = rotateKeyRing(undefined, generateSigningKey(random, NOW), NOW);
+  const issuer = new JwtIssuer({ ring: () => ring, clock, random });
+  return {
+    issuer,
+    clock,
+    kid: () => ring.active,
+    rotate: () => {
+      ring = rotateKeyRing(ring, generateSigningKey(random, NOW), NOW);
+    },
+  };
 }
 
-describe('TokenIssuer', () => {
-  it('signs a token with the current kid', async () => {
-    const result = await issuer().issue({
-      subject: 'alice',
-      audience: ['orders'],
-      scope: ['orders:write'],
+const decode = (part: string) => JSON.parse(Buffer.from(part, 'base64url').toString('utf8'));
+
+describe('JwtIssuer', () => {
+  it('issues a 5-minute token addressed to every service', async () => {
+    const f = fixture();
+    const issued = await f.issuer.issue({ sub: 'alice', scope: ['orders:write', 'payments:charge'] });
+    const [header, payload] = issued.token.split('.');
+    expect(decode(header as string)).toEqual({ alg: 'EdDSA', kid: f.kid(), typ: 'JWT' });
+    expect(decode(payload as string)).toEqual(issued.claims);
+    expect(issued.claims).toMatchObject({
+      iss: 'bastion-edge',
+      sub: 'alice',
+      aud: ['orders', 'inventory', 'payments'],
+      iat: NOW / 1000,
+      exp: NOW / 1000 + 300,
+      scope: ['orders:write', 'payments:charge'],
     });
-    expect(result.token.split('.')).toHaveLength(3);
-    const header = JSON.parse(
-      Buffer.from(result.token.split('.')[0], 'base64url').toString(),
-    ) as Record<string, unknown>;
-    expect(header).toMatchObject({ alg: 'EdDSA', typ: 'JWT', kid: 'k2' });
+    expect(issued.claims.jti).toMatch(/^[0-9a-f]{32}$/);
   });
 
-  it('sets sub, aud, scope, iss, iat, exp, jti', async () => {
-    const { claims } = await issuer().issue({
-      subject: 'alice',
-      audience: ['orders', 'inventory'],
-      scope: ['orders:write', 'inventory:reserve'],
-    });
-    expect(claims.sub).toBe('alice');
-    expect(claims.aud).toEqual(['orders', 'inventory']);
-    expect(claims.scope).toEqual(['orders:write', 'inventory:reserve']);
-    expect(claims.iss).toBe('edge');
-    // iat = now - 5 (skew), exp = iat + 300 (ttl) + 5 (skew). Difference = 305.
-    expect(claims.exp - claims.iat).toBe(305);
+  it('gives every token a fresh jti', async () => {
+    const f = fixture();
+    const a = await f.issuer.issue({ sub: 'alice', scope: ['orders:write'] });
+    const b = await f.issuer.issue({ sub: 'alice', scope: ['orders:write'] });
+    expect(a.claims.jti).not.toBe(b.claims.jti);
   });
 
-  it('produces a token that verifies with the public JWK', async () => {
-    const result = await issuer().issue({
-      subject: 'alice',
-      audience: ['orders'],
-      scope: ['orders:write'],
-    });
-    const jwk = store.get('k2')!.publicJwk;
-    const { payload } = await jwtVerify(result.token, jwk, {
-      currentDate: new Date(NOW * 1000),
-      clockTolerance: 5,
-    });
-    expect(payload.sub).toBe('alice');
-    expect(payload.aud).toEqual(['orders']);
+  it('is byte-identical for the same seed and clock', async () => {
+    const a = await fixture('same').issuer.issue({ sub: 'alice', scope: ['orders:write'] });
+    const b = await fixture('same').issuer.issue({ sub: 'alice', scope: ['orders:write'] });
+    expect(a.token).toBe(b.token);
+    const c = await fixture('other').issuer.issue({ sub: 'alice', scope: ['orders:write'] });
+    expect(c.token).not.toBe(a.token);
   });
 
-  it('uses the custom ttl when given', async () => {
-    const { claims } = await issuer().issue({
-      subject: 'alice',
-      audience: ['orders'],
-      scope: [],
-      ttlSeconds: 60,
-      skewSeconds: 0,
-    });
-    expect(claims.exp - claims.iat).toBe(60);
+  it('signs with the newly active key after a rotation', async () => {
+    const f = fixture();
+    const before = f.kid();
+    f.rotate();
+    const issued = await f.issuer.issue({ sub: 'alice', scope: ['orders:write'] });
+    expect(issued.kid).toBe(f.kid());
+    expect(issued.kid).not.toBe(before);
   });
 
-  it('is deterministic with a seeded random', async () => {
-    const a = await issuer().issue({ subject: 'alice', audience: ['orders'], scope: [] });
-    const b = await issuer().issue({ subject: 'alice', audience: ['orders'], scope: [] });
-    expect(a.claims.jti.slice(-8)).toBe(b.claims.jti.slice(-8));
+  it.each([
+    ['bad subject', { sub: 'a b', scope: ['orders:write'] }],
+    ['empty subject', { sub: '', scope: ['orders:write'] }],
+    ['no scopes', { sub: 'alice', scope: [] }],
+    ['unknown scope', { sub: 'alice', scope: ['admin:all'] }],
+  ])('rejects %s', async (_name, req) => {
+    await expect(fixture().issuer.issue(req as never)).rejects.toThrow(RangeError);
   });
 });
