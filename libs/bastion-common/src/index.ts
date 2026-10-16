@@ -24,3 +24,7 @@ export * from './jwt/jwks';
 export * from './jwt/jwks-cache';
 export * from './jwt/replay-cache';
 export * from './jwt/verifier';
+export * from './audit/audit.service';
+export * from './audit/trace';
+export * from './audit/resource';
+export * from './metrics/metrics.service';
