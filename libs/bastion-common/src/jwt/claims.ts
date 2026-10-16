@@ -1,65 +1,98 @@
-/** Issuer name carried in every Bastion token (`iss`). */
-export const ISSUER = 'bastion-edge';
+import type { Clock } from '../clock/clock';
+import { JWT_REASON, type JwtReason } from './reasons';
 
-/** Token lifetime in seconds (5 minutes). Replay tracking relies on this upper bound. */
-export const TOKEN_TTL_SECONDS = 300;
-
-/** Services a token is addressed to. Each service accepts it only if its own name is listed. */
-export const AUDIENCES = ['orders', 'inventory', 'payments'] as const;
-export type Audience = (typeof AUDIENCES)[number];
-
-/** Per-endpoint scopes. */
-export const SCOPES = ['orders:write', 'inventory:reserve', 'payments:charge'] as const;
-export type Scope = (typeof SCOPES)[number];
-
-/** The claims Bastion reads from a verified token. Anything else in the payload is ignored. */
-export interface BastionClaims {
-  readonly iss: string;
+/** The claims Bastion puts in every user token. */
+export interface TokenClaims {
+  /** Subject: the user id. */
   readonly sub: string;
+  /** Audience: the services the token is valid for. */
   readonly aud: readonly string[];
+  /** Issuer: always "edge" for user tokens. */
+  readonly iss: string;
+  /** Issued-at (epoch seconds). */
   readonly iat: number;
+  /** Expiry (epoch seconds). */
   readonly exp: number;
+  /** Single-use nonce, tracked by each service independently. */
   readonly jti: string;
+  /** Per-service scopes the token grants. */
   readonly scope: readonly string[];
 }
 
-const SUBJECT = /^[A-Za-z0-9._@-]{1,64}$/;
-const JTI = /^[0-9a-f]{32}$/;
-const NAME = /^[a-z][a-z0-9:-]{0,63}$/;
-const MAX_LIST = 16;
+export type ClaimsFailure = {
+  readonly ok: false;
+  readonly reason: JwtReason;
+  readonly detail?: string;
+};
+export type ClaimsSuccess = { readonly ok: true; readonly claims: TokenClaims };
+export type ClaimsCheck = ClaimsSuccess | ClaimsFailure;
 
-/** True for a username-like subject: 1 to 64 characters of [A-Za-z0-9._@-]. */
-export function isValidSubject(value: unknown): value is string {
-  return typeof value === 'string' && SUBJECT.test(value);
+function fail(reason: JwtReason, detail?: string): ClaimsFailure {
+  return detail === undefined ? { ok: false, reason } : { ok: false, reason, detail };
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function nameList(value: unknown): readonly string[] | undefined {
-  if (!Array.isArray(value) || value.length === 0 || value.length > MAX_LIST) return undefined;
-  const ok = value.every((v) => typeof v === 'string' && NAME.test(v));
-  return ok ? (value as string[]) : undefined;
-}
-
-function seconds(value: unknown): number | undefined {
-  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((v) => typeof v === 'string');
 }
 
 /**
- * Validates an untrusted JWT payload. Returns the claims Bastion uses, or undefined if
- * anything is missing or malformed. Never throws, whatever it is given.
+ * Structural validation for a decoded JWT payload. Called after signature
+ * verification. The Clock is used only for the timestamp checks so tests can
+ * simulate expired and not-yet-valid tokens.
  */
-export function parseClaims(payload: unknown): BastionClaims | undefined {
-  if (!isRecord(payload)) return undefined;
-  const { iss, sub, jti } = payload;
-  const aud = nameList(payload.aud);
-  const scope = nameList(payload.scope);
-  const iat = seconds(payload.iat);
-  const exp = seconds(payload.exp);
-  if (typeof iss !== 'string' || !isValidSubject(sub)) return undefined;
-  if (typeof jti !== 'string' || !JTI.test(jti)) return undefined;
-  if (!aud || !scope || iat === undefined || exp === undefined) return undefined;
-  return { iss, sub, aud, iat, exp, jti, scope };
+export function validateClaims(
+  payload: Readonly<Record<string, unknown>>,
+  options: {
+    readonly expectedAudience: string;
+    readonly expectedIssuer: string;
+    readonly clock: Clock;
+  },
+): ClaimsCheck {
+  const { expectedAudience, expectedIssuer, clock } = options;
+
+  if (typeof payload.sub !== 'string' || payload.sub.length === 0) {
+    return fail(JWT_REASON.MALFORMED, 'sub');
+  }
+  if (typeof payload.jti !== 'string' || payload.jti.length === 0) {
+    return fail(JWT_REASON.MALFORMED, 'jti');
+  }
+  if (typeof payload.exp !== 'number' || !Number.isInteger(payload.exp)) {
+    return fail(JWT_REASON.MALFORMED, 'exp');
+  }
+  if (typeof payload.iat !== 'number' || !Number.isInteger(payload.iat)) {
+    return fail(JWT_REASON.MALFORMED, 'iat');
+  }
+  if (typeof payload.iss !== 'string') {
+    return fail(JWT_REASON.MALFORMED, 'iss');
+  }
+  if (!isStringArray(payload.aud) || payload.aud.length === 0) {
+    return fail(JWT_REASON.MALFORMED, 'aud');
+  }
+  if (!isStringArray(payload.scope)) {
+    return fail(JWT_REASON.MALFORMED, 'scope');
+  }
+
+  const nowSec = clock.nowSec();
+  if (nowSec >= payload.exp) return fail(JWT_REASON.EXPIRED);
+  if (nowSec < payload.iat) return fail(JWT_REASON.NOT_YET_VALID);
+  if (payload.iss !== expectedIssuer) return fail(JWT_REASON.BAD_ISSUER);
+  if (!payload.aud.includes(expectedAudience)) return fail(JWT_REASON.BAD_AUD);
+
+  return {
+    ok: true,
+    claims: {
+      sub: payload.sub,
+      aud: [...payload.aud],
+      iss: payload.iss,
+      iat: payload.iat,
+      exp: payload.exp,
+      jti: payload.jti,
+      scope: [...payload.scope],
+    },
+  };
+}
+
+/** Does this token grant `scope`? */
+export function hasScope(claims: TokenClaims, scope: string): boolean {
+  return claims.scope.includes(scope);
 }
