@@ -94,7 +94,7 @@ function authProviders(): Provider[] {
           clock,
           jwks,
           replay,
-          skipAudienceCheck: cfg.isEdge,
+          skipAudienceCheck: cfg.isEdge || cfg.serviceName === 'edge',
         });
       },
       inject: [BASTION_CONFIG, CLOCK],

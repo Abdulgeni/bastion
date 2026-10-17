@@ -99,7 +99,10 @@ export function validateClaims(
   if (nowSec >= shape.exp) return fail(JWT_REASON.EXPIRED);
   if (nowSec < shape.iat) return fail(JWT_REASON.NOT_YET_VALID);
   if (shape.iss !== expectedIssuer) return fail(JWT_REASON.BAD_ISSUER);
-  if (!skipAudienceCheck && !shape.aud.includes(expectedAudience)) {
+  // Edge has no downstream audience, so its tokens never carry one.
+  // Treating 'edge' as a sentinel keeps the contract explicit even when the
+  // skipAudienceCheck flag isn't plumbed through.
+  if (!skipAudienceCheck && expectedAudience !== 'edge' && !shape.aud.includes(expectedAudience)) {
     return fail(JWT_REASON.BAD_AUD);
   }
 
