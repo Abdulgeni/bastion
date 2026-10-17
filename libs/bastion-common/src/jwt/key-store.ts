@@ -56,7 +56,14 @@ export class JwtKeyStore {
   ) {}
 
   static async load(varDir: string, currentKid?: string): Promise<JwtKeyStore> {
-    const dir = join(varDir, 'jwt');
+    return JwtKeyStore.loadFromDir(join(varDir, 'jwt'), currentKid);
+  }
+
+  /**
+   * Same as load(), but takes the key directory directly rather than its parent.
+   * Useful when the caller has an explicit keyStoreDir (as config does).
+   */
+  static async loadFromDir(dir: string, currentKid?: string): Promise<JwtKeyStore> {
     const files = await readKeyFiles(dir);
     if (files.length === 0) {
       throw new ConfigError([`no JWT signing keys in ${dir}`]);
