@@ -63,6 +63,8 @@ export interface BastionConfig {
   readonly jwt: JwtConfig;
   /** True when this process is edge (JWT issuer + JWKS publisher). */
   readonly isEdge: boolean;
+  /** Downstream service URLs. The current service is included too; unused. */
+  readonly serviceUrls: Readonly<Record<ServiceName, string>>;
   /** Test-only; never set in production (enforced at load). */
   readonly testSeed?: string;
 }
@@ -86,6 +88,10 @@ class EnvSchema {
   @IsOptional() @IsString() @MinLength(1) JWKS_URL?: string;
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) REPLAY_CACHE_SIZE?: number;
   @IsOptional() @IsString() @MinLength(1) JWT_KEYS_DIR?: string;
+  @IsOptional() @IsString() @MinLength(1) EDGE_URL?: string;
+  @IsOptional() @IsString() @MinLength(1) ORDERS_URL?: string;
+  @IsOptional() @IsString() @MinLength(1) INVENTORY_URL?: string;
+  @IsOptional() @IsString() @MinLength(1) PAYMENTS_URL?: string;
 }
 
 function parseEnv(env: Readonly<Record<string, string | undefined>>): EnvSchema {
@@ -122,6 +128,12 @@ function buildConfig(e: EnvSchema): BastionConfig {
       keyStoreDir: e.JWT_KEYS_DIR ?? join(varDir, 'jwt'),
     },
     isEdge: service === 'edge',
+    serviceUrls: {
+      edge: e.EDGE_URL ?? `https://edge:${PORT_DEFAULTS.edge.data}`,
+      orders: e.ORDERS_URL ?? `https://orders:${PORT_DEFAULTS.orders.data}`,
+      inventory: e.INVENTORY_URL ?? `https://inventory:${PORT_DEFAULTS.inventory.data}`,
+      payments: e.PAYMENTS_URL ?? `https://payments:${PORT_DEFAULTS.payments.data}`,
+    },
     testSeed: e.BASTION_TEST_SEED,
   };
 }
