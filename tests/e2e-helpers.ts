@@ -14,6 +14,7 @@ import { EdgeAppModule } from '../apps/edge/src/app.module';
 import { OrdersAppModule } from '../apps/orders/src/app.module';
 import { InventoryAppModule } from '../apps/inventory/src/app.module';
 import { PaymentsAppModule } from '../apps/payments/src/app.module';
+import { makeFakeVaultClient } from './fake-vault';
 
 export interface Ports {
   readonly edge: { readonly data: number; readonly mgmt: number };
@@ -28,7 +29,6 @@ export interface Stack {
   close(): Promise<void>;
 }
 
-/** Ask the OS for a free TCP port (bind then release). Small race, acceptable for tests. */
 export async function freePort(): Promise<number> {
   const server = createServer();
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -37,10 +37,12 @@ export async function freePort(): Promise<number> {
   return port;
 }
 
-/** Eight distinct ports, one data and one mgmt per service. */
 export async function allocatePorts(): Promise<Ports> {
   const [edgeData, edgeMgmt, ordersData, ordersMgmt, inventoryData, inventoryMgmt, paymentsData, paymentsMgmt] =
-    await Promise.all([freePort(), freePort(), freePort(), freePort(), freePort(), freePort(), freePort(), freePort()]);
+    await Promise.all([
+      freePort(), freePort(), freePort(), freePort(),
+      freePort(), freePort(), freePort(), freePort(),
+    ]);
   return {
     edge: { data: edgeData, mgmt: edgeMgmt },
     orders: { data: ordersData, mgmt: ordersMgmt },
@@ -49,9 +51,8 @@ export async function allocatePorts(): Promise<Ports> {
   };
 }
 
-/** Builds a BastionConfig for one service, wired to the shared var dir and the allocated ports. */
 export function buildConfig(service: ServiceName, ports: Ports, varDir: string): BastionConfig {
-  return {
+  const base: BastionConfig = {
     serviceName: service,
     nodeEnv: 'test',
     trustDomain: 'bastion.local',
@@ -77,9 +78,23 @@ export function buildConfig(service: ServiceName, ports: Ports, varDir: string):
       payments: `https://127.0.0.1:${ports.payments.data}`,
     },
   };
+  // Payments additionally needs a Vault section. Populated here even though the
+  // e2e overrides the client, because `loadConfig` would populate it for the real
+  // binary and the module factory asserts on its presence.
+  if (service === 'payments') {
+    return {
+      ...base,
+      vault: {
+        addr: 'http://127.0.0.1:1',  // unreachable; the fake client ignores it
+        roleIdFile: join(varDir, 'vault', 'role-id'),
+        wrappedSecretIdFile: join(varDir, 'vault', 'wrapped-secret-id'),
+        keyTtlSeconds: 10,
+      },
+    };
+  }
+  return base;
 }
 
-/** The forRoot module for one service. */
 function appModuleFor(service: ServiceName, config: BastionConfig): unknown {
   switch (service) {
     case 'edge':
@@ -89,20 +104,27 @@ function appModuleFor(service: ServiceName, config: BastionConfig): unknown {
     case 'inventory':
       return InventoryAppModule.forRoot(config);
     case 'payments':
-      return PaymentsAppModule.forRoot(config);
+      return PaymentsAppModule.forRoot(config, {
+        vaultClient: makeFakeVaultClient(),
+        appRole: { roleId: 'test-role', secretId: 'test-secret' },
+      });
   }
 }
 
-/** Starts one service; returns its running handle. */
-export function startService(service: ServiceName, config: BastionConfig): Promise<RunningService> {
-  return bootstrapService({ config, appModule: appModuleFor(service, config) as never });
+export async function startService(
+  service: ServiceName,
+  config: BastionConfig,
+): Promise<RunningService> {
+  try {
+    return await bootstrapService({ config, appModule: appModuleFor(service, config) as never });
+  } catch (err) {
+    process.stderr.write(
+      `[e2e] ${service} failed to start: ${err instanceof Error ? err.stack ?? err.message : String(err)}\n`,
+    );
+    throw err;
+  }
 }
 
-/**
- * Starts the whole stack: generates certs and JWT keys into a temp var dir,
- * allocates ports, starts all four services with matching configs, returns the
- * stack plus a close() that tears everything down.
- */
 export async function startAll(): Promise<Stack> {
   const varDir = tmpVar();
   const clock = new FakeClock(Date.now());
@@ -130,7 +152,6 @@ export interface EdgeRequestOptions {
   readonly token?: string;
 }
 
-/** POSTs JSON to edge's data listener over server-auth TLS. Returns status and parsed body. */
 export function edgePost(opts: EdgeRequestOptions): Promise<{ status: number; body: unknown }> {
   return new Promise((resolve, reject) => {
     const payload = opts.body === undefined ? '' : JSON.stringify(opts.body);
@@ -165,7 +186,6 @@ export function edgePost(opts: EdgeRequestOptions): Promise<{ status: number; bo
   });
 }
 
-/** Reads every service's audit log into parsed JSON lines. Missing files yield []. */
 export function readAudit(varDir: string): Record<ServiceName, Record<string, unknown>[]> {
   const out = {} as Record<ServiceName, Record<string, unknown>[]>;
   for (const service of SERVICE_NAMES) {
@@ -179,7 +199,6 @@ export function readAudit(varDir: string): Record<ServiceName, Record<string, un
   return out;
 }
 
-/** Lines appended to each service's log between `before` and `after`. */
 export function diffAudit(
   before: Record<ServiceName, Record<string, unknown>[]>,
   after: Record<ServiceName, Record<string, unknown>[]>,

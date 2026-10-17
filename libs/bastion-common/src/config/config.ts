@@ -43,12 +43,17 @@ export interface TlsFiles {
 
 /** Where the JWT verifier caches edge's public key set. */
 export interface JwtConfig {
-  /** URL of the JWKS document. Defaults to edge's management port. */
   readonly jwksUrl: string;
-  /** Hard cap on the per-service replay cache. */
   readonly replayCacheSize: number;
-  /** Directory holding the edge-only JWT signing keys (`<kid>.pem` + `current`). */
   readonly keyStoreDir: string;
+}
+
+/** Payments-only Vault settings. Other services ignore this. */
+export interface VaultConfig {
+  readonly addr: string;
+  readonly roleIdFile: string;
+  readonly wrappedSecretIdFile: string;
+  readonly keyTtlSeconds: number;
 }
 
 export interface BastionConfig {
@@ -65,6 +70,8 @@ export interface BastionConfig {
   readonly isEdge: boolean;
   /** Downstream service URLs. The current service is included too; unused. */
   readonly serviceUrls: Readonly<Record<ServiceName, string>>;
+  /** Payments-only. Undefined for every other service. */
+  readonly vault?: VaultConfig;
   /** Test-only; never set in production (enforced at load). */
   readonly testSeed?: string;
 }
@@ -92,6 +99,10 @@ class EnvSchema {
   @IsOptional() @IsString() @MinLength(1) ORDERS_URL?: string;
   @IsOptional() @IsString() @MinLength(1) INVENTORY_URL?: string;
   @IsOptional() @IsString() @MinLength(1) PAYMENTS_URL?: string;
+  @IsOptional() @IsString() @MinLength(1) VAULT_ADDR?: string;
+  @IsOptional() @IsString() @MinLength(1) VAULT_ROLE_ID_FILE?: string;
+  @IsOptional() @IsString() @MinLength(1) VAULT_WRAPPED_SECRET_ID_FILE?: string;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) VAULT_KEY_TTL_SECONDS?: number;
 }
 
 function parseEnv(env: Readonly<Record<string, string | undefined>>): EnvSchema {
@@ -104,12 +115,22 @@ function parseEnv(env: Readonly<Record<string, string | undefined>>): EnvSchema 
   return parsed;
 }
 
+function buildVaultConfig(e: EnvSchema, varDir: string): VaultConfig {
+  return {
+    addr: e.VAULT_ADDR ?? 'http://bastion-vault:8200',
+    roleIdFile: e.VAULT_ROLE_ID_FILE ?? join(varDir, 'vault', 'role-id'),
+    wrappedSecretIdFile:
+      e.VAULT_WRAPPED_SECRET_ID_FILE ?? join(varDir, 'vault', 'wrapped-secret-id'),
+    keyTtlSeconds: e.VAULT_KEY_TTL_SECONDS ?? 10,
+  };
+}
+
 function buildConfig(e: EnvSchema): BastionConfig {
   const service = e.SERVICE_NAME;
   const varDir = e.BASTION_VAR_DIR ?? './var';
   const ports = PORT_DEFAULTS[service];
   const mgmtPort = e.MGMT_PORT ?? ports.mgmt;
-  return {
+  const base: BastionConfig = {
     serviceName: service,
     nodeEnv: e.NODE_ENV,
     trustDomain: e.BASTION_TRUST_DOMAIN ?? 'bastion.local',
@@ -136,6 +157,7 @@ function buildConfig(e: EnvSchema): BastionConfig {
     },
     testSeed: e.BASTION_TEST_SEED,
   };
+  return service === 'payments' ? { ...base, vault: buildVaultConfig(e, varDir) } : base;
 }
 
 /**

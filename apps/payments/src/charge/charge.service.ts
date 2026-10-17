@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { createHash, createHmac } from 'node:crypto';
+import { KeyHolder } from '../vault/key-holder';
 
 export interface ChargeRequest {
   readonly orderId: string;
@@ -14,31 +15,22 @@ export interface ChargeResponse {
 }
 
 /**
- * Charges by HMACing the order receipt with the in-memory API key.
- *
- * TODO Vault step: replace the stub key with one minted by Vault and rotated
- * every VAULT_KEY_TTL_SECONDS. Until then, the key is a fixed string per
- * process, and the fingerprint is its first 16 hex characters so a demo can
- * observe rotation once Vault is wired.
+ * Charges by HMACing the order receipt with the current Vault-derived key.
+ * The key lives only in memory (see KeyHolder). The fingerprint is its first
+ * 16 hex SHA-256 characters, so a demo can observe rotation without exposing
+ * the key material.
  */
 @Injectable()
 export class ChargeService {
-  private readonly apiKey = 'stub-api-key';
-  private readonly keyFingerprint = createHash('sha256')
-    .update(this.apiKey)
-    .digest('hex')
-    .slice(0, 16);
+  constructor(private readonly keys: KeyHolder) {}
 
   charge(body: ChargeRequest): ChargeResponse {
     if (typeof body.orderId !== 'string' || typeof body.amount !== 'number') {
       throw new Error('invalid-body');
     }
-    const receipt = createHmac('sha256', this.apiKey).update(body.orderId).digest('hex');
-    return {
-      charged: true,
-      amount: body.amount,
-      keyFingerprint: this.keyFingerprint,
-      receipt,
-    };
+    const key = this.keys.currentKey();
+    const receipt = createHmac('sha256', key).update(body.orderId).digest('hex');
+    const fingerprint = createHash('sha256').update(key).digest('hex').slice(0, 16);
+    return { charged: true, amount: body.amount, keyFingerprint: fingerprint, receipt };
   }
 }
