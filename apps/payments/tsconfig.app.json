@@ -1,0 +1,9 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "../../dist/apps/payments",
+    "rootDir": "../.."
+  },
+  "include": ["src/**/*.ts", "../../libs/bastion-common/src/**/*.ts"],
+  "exclude": ["**/*.spec.ts", "../../dist/**/*"]
+}
