@@ -76,6 +76,30 @@ importers:
         specifier: ~5.4.5
         version: 5.4.5
 
+  apps/edge:
+    dependencies:
+      '@bastion/common':
+        specifier: workspace:*
+        version: link:../../libs/bastion-common
+
+  apps/inventory:
+    dependencies:
+      '@bastion/common':
+        specifier: workspace:*
+        version: link:../../libs/bastion-common
+
+  apps/orders:
+    dependencies:
+      '@bastion/common':
+        specifier: workspace:*
+        version: link:../../libs/bastion-common
+
+  apps/payments:
+    dependencies:
+      '@bastion/common':
+        specifier: workspace:*
+        version: link:../../libs/bastion-common
+
   libs/bastion-common:
     dependencies:
       '@nestjs/common':
