@@ -41,6 +41,16 @@ export interface TlsFiles {
   readonly caFile: string;
 }
 
+/** Where the JWT verifier caches edge's public key set. */
+export interface JwtConfig {
+  /** URL of the JWKS document. Defaults to edge's management port. */
+  readonly jwksUrl: string;
+  /** Hard cap on the per-service replay cache. */
+  readonly replayCacheSize: number;
+  /** Directory holding the edge-only JWT signing keys (`<kid>.pem` + `current`). */
+  readonly keyStoreDir: string;
+}
+
 export interface BastionConfig {
   readonly serviceName: ServiceName;
   readonly nodeEnv: (typeof NODE_ENVS)[number];
@@ -50,6 +60,9 @@ export interface BastionConfig {
   readonly mgmt: ListenerConfig;
   readonly tls: TlsFiles;
   readonly auditDir: string;
+  readonly jwt: JwtConfig;
+  /** True when this process is edge (JWT issuer + JWKS publisher). */
+  readonly isEdge: boolean;
   /** Test-only; never set in production (enforced at load). */
   readonly testSeed?: string;
 }
@@ -70,6 +83,9 @@ class EnvSchema {
   @IsOptional() @IsString() @MinLength(1) TLS_CA_FILE?: string;
   @IsOptional() @IsString() @MinLength(1) AUDIT_DIR?: string;
   @IsOptional() @IsString() @MinLength(1) BASTION_TEST_SEED?: string;
+  @IsOptional() @IsString() @MinLength(1) JWKS_URL?: string;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) REPLAY_CACHE_SIZE?: number;
+  @IsOptional() @IsString() @MinLength(1) JWT_KEYS_DIR?: string;
 }
 
 function parseEnv(env: Readonly<Record<string, string | undefined>>): EnvSchema {
@@ -86,19 +102,26 @@ function buildConfig(e: EnvSchema): BastionConfig {
   const service = e.SERVICE_NAME;
   const varDir = e.BASTION_VAR_DIR ?? './var';
   const ports = PORT_DEFAULTS[service];
+  const mgmtPort = e.MGMT_PORT ?? ports.mgmt;
   return {
     serviceName: service,
     nodeEnv: e.NODE_ENV,
     trustDomain: e.BASTION_TRUST_DOMAIN ?? 'bastion.local',
     logLevel: e.LOG_LEVEL ?? 'info',
     data: { host: e.DATA_BIND_ADDR, port: e.DATA_PORT ?? ports.data },
-    mgmt: { host: e.MGMT_BIND_ADDR, port: e.MGMT_PORT ?? ports.mgmt },
+    mgmt: { host: e.MGMT_BIND_ADDR, port: mgmtPort },
     tls: {
       certFile: e.TLS_CERT_FILE ?? join(varDir, 'certs', service, 'cert.pem'),
       keyFile: e.TLS_KEY_FILE ?? join(varDir, 'certs', service, 'key.pem'),
       caFile: e.TLS_CA_FILE ?? join(varDir, 'ca', 'ca.pem'),
     },
     auditDir: e.AUDIT_DIR ?? join(varDir, 'audit'),
+    jwt: {
+      jwksUrl: e.JWKS_URL ?? `http://edge:${mgmtPort}/.well-known/jwks.json`,
+      replayCacheSize: e.REPLAY_CACHE_SIZE ?? 100_000,
+      keyStoreDir: e.JWT_KEYS_DIR ?? join(varDir, 'jwt'),
+    },
+    isEdge: service === 'edge',
     testSeed: e.BASTION_TEST_SEED,
   };
 }
