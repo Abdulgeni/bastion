@@ -12,6 +12,8 @@ export interface VerifyOptions {
   readonly clock: Clock;
   readonly jwks: JwksCache;
   readonly replay: ReplayCache;
+  /** Edge: skip the aud check because tokens are addressed to downstream services. */
+  readonly skipAudienceCheck?: boolean;
 }
 
 export type VerifyResult =
@@ -78,6 +80,7 @@ export class TokenVerifier {
       expectedAudience: this.options.expectedAudience,
       expectedIssuer: this.options.expectedIssuer,
       clock: this.options.clock,
+      skipAudienceCheck: this.options.skipAudienceCheck,
     });
     if (!claims.ok) return claims;
 

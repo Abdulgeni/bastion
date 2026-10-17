@@ -35,21 +35,19 @@ function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((v) => typeof v === 'string');
 }
 
-/**
- * Structural validation for a decoded JWT payload. Called after signature
- * verification. The Clock is used only for the timestamp checks so tests can
- * simulate expired and not-yet-valid tokens.
- */
-export function validateClaims(
-  payload: Readonly<Record<string, unknown>>,
-  options: {
-    readonly expectedAudience: string;
-    readonly expectedIssuer: string;
-    readonly clock: Clock;
-  },
-): ClaimsCheck {
-  const { expectedAudience, expectedIssuer, clock } = options;
+/** The structurally-validated claim fields, or a failure reason. */
+interface ClaimFields {
+  readonly sub: string;
+  readonly jti: string;
+  readonly exp: number;
+  readonly iat: number;
+  readonly iss: string;
+  readonly aud: string[];
+  readonly scope: string[];
+}
 
+/** Reads and type-checks every field whose shape is structural (not temporal). */
+function readShape(payload: Readonly<Record<string, unknown>>): ClaimFields | ClaimsFailure {
   if (typeof payload.sub !== 'string' || payload.sub.length === 0) {
     return fail(JWT_REASON.MALFORMED, 'sub');
   }
@@ -62,32 +60,59 @@ export function validateClaims(
   if (typeof payload.iat !== 'number' || !Number.isInteger(payload.iat)) {
     return fail(JWT_REASON.MALFORMED, 'iat');
   }
-  if (typeof payload.iss !== 'string') {
-    return fail(JWT_REASON.MALFORMED, 'iss');
-  }
+  if (typeof payload.iss !== 'string') return fail(JWT_REASON.MALFORMED, 'iss');
   if (!isStringArray(payload.aud) || payload.aud.length === 0) {
     return fail(JWT_REASON.MALFORMED, 'aud');
   }
-  if (!isStringArray(payload.scope)) {
-    return fail(JWT_REASON.MALFORMED, 'scope');
-  }
+  if (!isStringArray(payload.scope)) return fail(JWT_REASON.MALFORMED, 'scope');
+  return {
+    sub: payload.sub,
+    jti: payload.jti,
+    exp: payload.exp,
+    iat: payload.iat,
+    iss: payload.iss,
+    aud: payload.aud,
+    scope: payload.scope,
+  };
+}
 
+/**
+ * Structural validation for a decoded JWT payload. Called after signature
+ * verification. The Clock is used only for the timestamp checks so tests can
+ * simulate expired and not-yet-valid tokens.
+ */
+export function validateClaims(
+  payload: Readonly<Record<string, unknown>>,
+  options: {
+    readonly expectedAudience: string;
+    readonly expectedIssuer: string;
+    readonly clock: Clock;
+    /** Edge: skip the aud check because tokens are addressed to downstream services. */
+    readonly skipAudienceCheck?: boolean;
+  },
+): ClaimsCheck {
+  const shape = readShape(payload);
+  if ('ok' in shape) return shape;
+
+  const { expectedAudience, expectedIssuer, clock, skipAudienceCheck } = options;
   const nowSec = clock.nowSec();
-  if (nowSec >= payload.exp) return fail(JWT_REASON.EXPIRED);
-  if (nowSec < payload.iat) return fail(JWT_REASON.NOT_YET_VALID);
-  if (payload.iss !== expectedIssuer) return fail(JWT_REASON.BAD_ISSUER);
-  if (!payload.aud.includes(expectedAudience)) return fail(JWT_REASON.BAD_AUD);
+  if (nowSec >= shape.exp) return fail(JWT_REASON.EXPIRED);
+  if (nowSec < shape.iat) return fail(JWT_REASON.NOT_YET_VALID);
+  if (shape.iss !== expectedIssuer) return fail(JWT_REASON.BAD_ISSUER);
+  if (!skipAudienceCheck && !shape.aud.includes(expectedAudience)) {
+    return fail(JWT_REASON.BAD_AUD);
+  }
 
   return {
     ok: true,
     claims: {
-      sub: payload.sub,
-      aud: [...payload.aud],
-      iss: payload.iss,
-      iat: payload.iat,
-      exp: payload.exp,
-      jti: payload.jti,
-      scope: [...payload.scope],
+      sub: shape.sub,
+      aud: [...shape.aud],
+      iss: shape.iss,
+      iat: shape.iat,
+      exp: shape.exp,
+      jti: shape.jti,
+      scope: [...shape.scope],
     },
   };
 }

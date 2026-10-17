@@ -31,3 +31,4 @@ export * from './metrics/metrics.service';
 export * from './audit/access-recorder';
 export * from './auth/jwt-auth.guard';
 export * from './management/management-server';
+export * from './nest/bastion.module';
