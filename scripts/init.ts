@@ -107,7 +107,13 @@ export function readRootToken(varDir: string): string {
 }
 
 function main(): void {
-  const opts = readCliOptions(process.env, process.argv.slice(2));
+  const argv = process.argv.slice(2);
+  const opts = readCliOptions(process.env, argv);
+  if (argv.includes('--print-root-token')) {
+    // Print only the token on stdout so a shell can capture it with $(...).
+    process.stdout.write(readRootToken(opts.varDir));
+    return;
+  }
   const result = initMaterial(opts.varDir);
   process.stdout.write(`var dir: ${result.varDir}\n`);
   process.stdout.write(`created: ${result.created.length === 0 ? '(none)' : result.created.join(', ')}\n`);
