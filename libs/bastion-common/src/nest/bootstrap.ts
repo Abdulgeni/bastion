@@ -1,5 +1,5 @@
 import { NestFactory } from '@nestjs/core';
-import type { INestApplication, Type } from '@nestjs/common';
+import type { DynamicModule, INestApplication, Type } from '@nestjs/common';
 import type { Server as HttpsServer, ServerOptions } from 'node:https';
 import { SystemClock } from '../clock/clock';
 import { loadWorkloadIdentity, type WorkloadIdentity } from '../identity/workload-identity';
@@ -14,8 +14,8 @@ import type { BastionConfig } from '../config/config';
 
 export interface BootstrapOptions {
   readonly config: BastionConfig;
-  /** The app's root Nest module; typically `AppModule` from the app's own `src/`. */
-  readonly appModule: Type<unknown>;
+  /** The app's root module. A `forRoot()` DynamicModule or a plain class both work. */
+  readonly appModule: Type<unknown> | DynamicModule;
 }
 
 export interface RunningService {
