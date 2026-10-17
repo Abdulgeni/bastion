@@ -33,3 +33,4 @@ export * from './auth/jwt-auth.guard';
 export * from './management/management-server';
 export * from './nest/bastion.module';
 export * from './nest/bootstrap';
+export * from './nest/http-client';

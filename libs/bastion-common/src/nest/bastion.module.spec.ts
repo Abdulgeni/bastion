@@ -27,6 +27,12 @@ function config(over: Partial<BastionConfig> = {}): BastionConfig {
     auditDir: '/tmp/audit',
     jwt: { jwksUrl: 'http://127.0.0.1:9/jwks', replayCacheSize: 1000, keyStoreDir: '/tmp/jwt' },
     isEdge: false,
+    serviceUrls: {
+      edge: 'https://edge:8080',
+      orders: 'https://orders:8443',
+      inventory: 'https://inventory:8444',
+      payments: 'https://payments:8445',
+    },
     ...over,
   };
 }
