@@ -120,7 +120,9 @@ export class TokenVerifier {
         currentDate: this.options.clock.now(),
         clockTolerance: 0,
         issuer: this.options.expectedIssuer,
-        audience: this.options.expectedAudience,
+        // Edge: no audience — tokens are addressed to downstream services,
+        // and jose would reject them here before validateClaims can run.
+        ...(this.options.skipAudienceCheck === true ? {} : { audience: this.options.expectedAudience }),
       } as never);
       return { kind: 'payload', payload: result.payload as Record<string, unknown> };
     } catch (err) {
