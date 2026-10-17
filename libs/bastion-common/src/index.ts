@@ -28,3 +28,6 @@ export * from './audit/audit.service';
 export * from './audit/trace';
 export * from './audit/resource';
 export * from './metrics/metrics.service';
+export * from './audit/access-recorder';
+export * from './auth/jwt-auth.guard';
+export * from './management/management-server';

@@ -137,3 +137,44 @@ export class TokenVerifier {
     return { ok: true, claims };
   }
 }
+
+/**
+ * Aliases and helpers added for Step 5's guard. They do not change the
+ * behaviour of TokenVerifier or VerifyResult; they exist so callers can
+ * import under either name and so the guard can share the bearer-token
+ * parsing and scope-checking logic.
+ */
+
+/** Alias for VerifyResult so Step 5's guard can import either name. */
+export type JwtResult = VerifyResult;
+
+/** Alias for TokenVerifier so Step 5's guard can import either name. */
+export { TokenVerifier as JwtVerifier };
+
+/** Maximum length of a bearer token, matching MAX_TOKEN_LENGTH above. */
+const MAX_BEARER_TOKEN_LENGTH = 4096;
+
+/** `Bearer <jwt>` where each segment is base64url. */
+const BEARER = /^Bearer ([A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)$/;
+
+/**
+ * Extracts the token from an `Authorization: Bearer <jwt>` header, or
+ * undefined if it is not that shape.
+ */
+export function extractBearerToken(header: string | undefined): string | undefined {
+  if (typeof header !== 'string' || header.length > MAX_BEARER_TOKEN_LENGTH + 7) return undefined;
+  return BEARER.exec(header)?.[1];
+}
+
+/**
+ * Whether verified claims carry `required`. A denial is HTTP 403 with the
+ * given reason.
+ */
+export function checkScope(
+  claims: TokenClaims,
+  required: string,
+): { readonly ok: true } | { readonly ok: false; readonly reason: string; readonly status: 403 } {
+  return claims.scope.includes(required)
+    ? { ok: true }
+    : { ok: false, reason: `scope+missing:${required}`, status: 403 };
+}
