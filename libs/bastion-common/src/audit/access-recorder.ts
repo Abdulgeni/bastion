@@ -1,4 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
+import { JWT_OUTCOME_BY_REASON } from '../jwt/reasons';
 import type { TokenClaims } from '../jwt/claims';
 import type { VerifyResult } from '../jwt/verifier';
 import type { PeerCheck } from '../identity/peer-check';
@@ -55,17 +56,25 @@ export class AccessRecorder implements PeerDecisionListener {
     });
   }
 
-  /** The token was rejected (401) or could not be judged (503). */
+  /**
+   * The token was rejected (401) or could not be judged (503). Only
+   * `jwks+unavailable` and `replay+cache_full` are 503s; every other denial
+   * reason is a token verdict and counts against the JWT metric. When the
+   * failure carries claims (the verifier only sets them after the signature
+   * verified), the subject and jti are attributed to the event.
+   */
   jwtDenied(ctx: AccessContext, result: DeniedJwt): void {
-    const outcome = result.reason === 'jwt+ok' ? undefined : undefined;
-    void outcome;
+    const outcome = JWT_OUTCOME_BY_REASON[result.reason];
+    if (outcome) this.metrics.recordJwt(outcome);
     this.metrics.recordAuthz('deny', ctx.resource);
+    const status = result.reason === 'jwks+unavailable' || result.reason === 'replay+cache_full' ? 503 : 401;
+    const claims = 'claims' in result ? (result as { claims?: TokenClaims }).claims : undefined;
     this.audit.record({
       ...this.base(ctx),
       decision: 'deny',
       reason: result.reason,
-      status: result.reason === 'jwks+unavailable' || result.reason === 'replay+cache_full' ? 503 : 401,
-      ...this.subject(result.ok === false && 'claims' in result ? undefined : undefined),
+      status,
+      ...this.subject(claims),
     });
   }
 
@@ -86,7 +95,12 @@ export class AccessRecorder implements PeerDecisionListener {
   allowed(ctx: AccessContext, claims: TokenClaims): void {
     this.metrics.recordJwt('ok');
     this.metrics.recordAuthz('allow', ctx.resource);
-    this.audit.record({ ...this.base(ctx), decision: 'allow', reason: 'ok', ...this.subject(claims) });
+    this.audit.record({
+      ...this.base(ctx),
+      decision: 'allow',
+      reason: 'ok',
+      ...this.subject(claims),
+    });
   }
 
   private base(ctx: AccessContext) {
