@@ -89,11 +89,18 @@ export class VaultClient {
     const path = `/v1/sys/tools/random/${bytes}`;
     const res = await this.request(path, { method: 'POST', headers: { 'x-vault-token': token } });
     const parsed = res as RandomResponse;
-    const hex = parsed.data?.random_bytes;
-    if (typeof hex !== 'string' || !/^[0-9a-f]*$/.test(hex) || hex.length !== bytes * 2) {
+    // Vault's sys/tools/random returns the bytes base64-encoded (not hex).
+    const encoded = parsed.data?.random_bytes;
+    if (typeof encoded !== 'string' || encoded.length === 0) {
       throw new VaultUnavailableError('Vault random response has an unexpected shape');
     }
-    return Buffer.from(hex, 'hex');
+    const decoded = Buffer.from(encoded, 'base64');
+    if (decoded.length !== bytes) {
+      throw new VaultUnavailableError(
+        `Vault random returned ${decoded.length} bytes, expected ${bytes}`,
+      );
+    }
+    return decoded;
   }
 
   private async post(path: string, body: unknown): Promise<unknown> {
