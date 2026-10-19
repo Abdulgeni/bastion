@@ -19,13 +19,18 @@ COPY apps/edge apps/edge
 RUN pnpm --filter @bastion/common build \
  && pnpm exec tsc -p apps/edge/tsconfig.app.json
 
+FROM deps AS deploy
+COPY --from=build /repo/dist ./dist
+COPY --from=build /repo/libs/bastion-common/dist ./libs/bastion-common/dist
+RUN pnpm --filter=@bastion/edge deploy --prod /deploy \
+ && rm -rf /deploy/dist \
+ && cp -r /repo/dist /deploy/dist \
+ && cp -r libs/bastion-common/dist /deploy/node_modules/@bastion/common/dist
+
 FROM node:20-slim AS runtime
 WORKDIR /app
-COPY --from=build --chown=node:node /repo/dist/apps/edge ./dist
-COPY --from=build --chown=node:node /repo/libs/bastion-common/dist ./node_modules/@bastion/common/dist
-COPY --from=build --chown=node:node /repo/libs/bastion-common/package.json ./node_modules/@bastion/common/package.json
-COPY --from=build --chown=node:node /repo/node_modules ./node_modules
+COPY --from=deploy --chown=node:node /deploy/ ./
 ENV NODE_ENV=production
 USER node
 EXPOSE 8080 9090
-CMD ["node", "dist/apps/edge/src/main.js"]
+CMD ["node", "dist/apps/edge/apps/edge/src/main.js"]

@@ -11,7 +11,13 @@
 set -euo pipefail
 
 : "${VAULT_ADDR:?VAULT_ADDR must be set}"
-: "${VAULT_TOKEN:?VAULT_TOKEN must be set}"
+# VAULT_TOKEN may be provided directly (as in step 6c's demo invocation)
+# or via VAULT_TOKEN_FILE (as the compose init chain passes it).
+if [ -z "${VAULT_TOKEN:-}" ] && [ -n "${VAULT_TOKEN_FILE:-}" ] && [ -r "${VAULT_TOKEN_FILE}" ]; then
+  VAULT_TOKEN="$(tr -d '\n' < "${VAULT_TOKEN_FILE}")"
+  export VAULT_TOKEN
+fi
+: "${VAULT_TOKEN:?VAULT_TOKEN or VAULT_TOKEN_FILE must be set and readable}"
 : "${VAR_DIR:=/var}"
 
 wait_for_vault() {
