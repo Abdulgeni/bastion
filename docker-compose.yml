@@ -1,13 +1,4 @@
 # Bastion, five-network topology. See Step 1's F1/F2.
-#   bastion-frontend:  edge, rogue (profile)
-#   bastion-inventory: orders, inventory
-#   bastion-inventory and bastion-payments must not talk to each other.
-#   bastion-payments:  orders, payments
-#   bastion-vault:     payments, vault
-#   bastion-mgmt:      edge, orders, inventory, payments, tools (internal)
-#
-# Fixed IPAM: DATA_BIND_ADDR / MGMT_BIND_ADDR derive from these addresses,
-# so a listener on one service can never be reached on the wrong network.
 
 name: bastion
 
@@ -44,10 +35,10 @@ networks:
       config:
         - subnet: 172.24.0.0/24
 
+volumes:
+  jwt-keys:
+
 services:
-  # ------------------------------------------------------------------
-  # Phase A: generate material. Runs once, exits.
-  # ------------------------------------------------------------------
   bastion-init:
     build:
       context: .
@@ -59,12 +50,10 @@ services:
       BASTION_VAR_DIR: /var/bastion
     volumes:
       - ./var:/var/bastion
+      - jwt-keys:/var/bastion/jwt
     network_mode: "none"
     restart: "no"
 
-  # ------------------------------------------------------------------
-  # Phase B precursor: Vault in dev mode. Root token is written by init.
-  # ------------------------------------------------------------------
   vault:
     image: hashicorp/vault:1.17.2
     container_name: bastion-vault
@@ -85,7 +74,7 @@ services:
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
-        export VAULT_DEV_ROOT_TOKEN_ID="$(cat /var/bastion/vault/root-token)"
+        export VAULT_DEV_ROOT_TOKEN_ID="$$(cat /var/bastion/vault/root-token)"
         exec docker-entrypoint.sh server -dev -dev-listen-address=0.0.0.0:8200
     healthcheck:
       test: ["CMD", "sh", "-c", "VAULT_ADDR=http://127.0.0.1:8200 vault status >/dev/null 2>&1 || exit 1"]
@@ -93,9 +82,6 @@ services:
       timeout: 2s
       retries: 15
 
-  # ------------------------------------------------------------------
-  # Phase B: bootstrap AppRole, policy, role-id, wrapped secret-id.
-  # ------------------------------------------------------------------
   bastion-vault-bootstrap:
     build:
       context: .
@@ -112,14 +98,12 @@ services:
       VAR_DIR: /var/bastion
     volumes:
       - ./var:/var/bastion
+      - jwt-keys:/var/bastion/jwt
     networks:
       vault:
         ipv4_address: 172.23.0.11
     restart: "no"
 
-  # ------------------------------------------------------------------
-  # Four data-plane services.
-  # ------------------------------------------------------------------
   edge:
     build:
       context: .
@@ -133,13 +117,13 @@ services:
       NODE_ENV: production
       BASTION_VAR_DIR: /var/bastion
       DATA_BIND_ADDR: 0.0.0.0
-      MGMT_BIND_ADDR: 172.24.0.10
+      MGMT_BIND_ADDR: 0.0.0.0
       LOG_LEVEL: ${LOG_LEVEL:-info}
       BASTION_TRUST_DOMAIN: ${BASTION_TRUST_DOMAIN:-bastion.local}
     volumes:
       - ./var:/var/bastion:ro
       - ./var/audit:/var/bastion/audit
-      - ./var/jwt:/var/bastion/jwt:ro
+      - jwt-keys:/var/bastion/jwt:ro
     networks:
       frontend:
         ipv4_address: 172.20.0.10
@@ -149,7 +133,7 @@ services:
       - "${EDGE_DATA_HOST_PORT:-8080}:8080"
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://172.24.0.10:9090/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:9090/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 5s
       timeout: 3s
       retries: 6
@@ -169,14 +153,15 @@ services:
       SERVICE_NAME: orders
       NODE_ENV: production
       BASTION_VAR_DIR: /var/bastion
-      DATA_BIND_ADDR: 172.21.0.10
-      MGMT_BIND_ADDR: 172.24.0.11
+      DATA_BIND_ADDR: 0.0.0.0
+      MGMT_BIND_ADDR: 0.0.0.0
       LOG_LEVEL: ${LOG_LEVEL:-info}
       BASTION_TRUST_DOMAIN: ${BASTION_TRUST_DOMAIN:-bastion.local}
       JWKS_URL: http://edge:9090/.well-known/jwks.json
     volumes:
       - ./var:/var/bastion:ro
       - ./var/audit:/var/bastion/audit
+      - jwt-keys:/var/bastion/jwt:ro
     networks:
       inventory:
         ipv4_address: 172.21.0.10
@@ -186,7 +171,7 @@ services:
         ipv4_address: 172.24.0.11
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://172.24.0.11:9091/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:9091/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 5s
       timeout: 3s
       retries: 6
@@ -206,14 +191,15 @@ services:
       SERVICE_NAME: inventory
       NODE_ENV: production
       BASTION_VAR_DIR: /var/bastion
-      DATA_BIND_ADDR: 172.21.0.11
-      MGMT_BIND_ADDR: 172.24.0.12
+      DATA_BIND_ADDR: 0.0.0.0
+      MGMT_BIND_ADDR: 0.0.0.0
       LOG_LEVEL: ${LOG_LEVEL:-info}
       BASTION_TRUST_DOMAIN: ${BASTION_TRUST_DOMAIN:-bastion.local}
       JWKS_URL: http://edge:9090/.well-known/jwks.json
     volumes:
       - ./var:/var/bastion:ro
       - ./var/audit:/var/bastion/audit
+      - jwt-keys:/var/bastion/jwt:ro
     networks:
       inventory:
         ipv4_address: 172.21.0.11
@@ -221,7 +207,7 @@ services:
         ipv4_address: 172.24.0.12
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://172.24.0.12:9092/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:9092/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 5s
       timeout: 3s
       retries: 6
@@ -243,8 +229,8 @@ services:
       SERVICE_NAME: payments
       NODE_ENV: production
       BASTION_VAR_DIR: /var/bastion
-      DATA_BIND_ADDR: 172.22.0.11
-      MGMT_BIND_ADDR: 172.24.0.13
+      DATA_BIND_ADDR: 0.0.0.0
+      MGMT_BIND_ADDR: 0.0.0.0
       LOG_LEVEL: ${LOG_LEVEL:-info}
       BASTION_TRUST_DOMAIN: ${BASTION_TRUST_DOMAIN:-bastion.local}
       JWKS_URL: http://edge:9090/.well-known/jwks.json
@@ -253,6 +239,7 @@ services:
     volumes:
       - ./var:/var/bastion:ro
       - ./var/audit:/var/bastion/audit
+      - jwt-keys:/var/bastion/jwt:ro
     networks:
       payments:
         ipv4_address: 172.22.0.11
@@ -262,15 +249,12 @@ services:
         ipv4_address: 172.24.0.13
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://172.24.0.13:9093/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:9093/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 5s
       timeout: 3s
       retries: 6
       start_period: 20s
 
-  # ------------------------------------------------------------------
-  # Tools: for reading /metrics without publishing mgmt ports.
-  # ------------------------------------------------------------------
   tools:
     build:
       context: .
@@ -280,12 +264,11 @@ services:
     networks:
       mgmt:
         ipv4_address: 172.24.0.50
+    volumes:
+      - jwt-keys:/var/bastion/jwt:ro
     command: ["sleep", "infinity"]
     restart: "no"
 
-  # ------------------------------------------------------------------
-  # Rogue: attacker container on the frontend network only.
-  # ------------------------------------------------------------------
   rogue:
     build:
       context: .

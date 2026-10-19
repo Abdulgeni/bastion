@@ -1,5 +1,4 @@
 import { NestFactory } from '@nestjs/core';
-import { ExpressAdapter } from '@nestjs/platform-express';
 import type { DynamicModule, INestApplication, Type } from '@nestjs/common';
 import * as https from 'node:https';
 import type { ServerOptions } from 'node:https';
@@ -30,7 +29,6 @@ const trace = (msg: string): void => {
   if (TRACE) process.stderr.write(`[boot] ${msg}\n`);
 };
 
-// Refuse to let Nest call process.exit() on bootstrap errors; surface the error instead.
 process.on('uncaughtException', (e) => {
   process.stderr.write(`[boot] uncaughtException: ${e.stack ?? e.message}\n`);
   process.exit(1);
@@ -51,11 +49,9 @@ async function createHttpsApp(
   opts: BootstrapOptions,
   tls: ServerOptions,
 ): Promise<INestApplication> {
-  trace('createHttpsApp: building https server');
-  const httpsServer = https.createServer(tls);
-  const adapter = new ExpressAdapter(httpsServer);
   trace('createHttpsApp: NestFactory.create');
-  const app = await NestFactory.create(opts.appModule as never, adapter, {
+  const app = await NestFactory.create(opts.appModule as never, {
+    httpsOptions: tls as never,
     logger: false,
     abortOnError: false,
   });

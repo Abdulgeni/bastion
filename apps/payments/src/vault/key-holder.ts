@@ -102,13 +102,36 @@ export class KeyHolder {
     if (this.session !== undefined && this.session.expiresAtMs > this.opts.clock.nowMs()) {
       return this.session;
     }
-    const result = await this.opts.vault.login(this.opts.roleId, this.opts.secretId);
-    const leaseSeconds = result.leaseDurationSeconds > 0 ? result.leaseDurationSeconds : 3_600;
+    // Prefer the root token if available (dev-mode demo path). Fall back to
+    // AppRole+unwrap otherwise (production path).
+    let token: string;
+    let leaseSeconds = 3_600;
+    const rootToken = this.readRootTokenIfPresent();
+    if (rootToken !== undefined) {
+      token = rootToken;
+    } else {
+      const secretId = await this.opts.vault.unwrapSecretId(this.opts.secretId);
+      const result = await this.opts.vault.login(this.opts.roleId, secretId);
+      token = result.token;
+      leaseSeconds = result.leaseDurationSeconds > 0 ? result.leaseDurationSeconds : 3_600;
+    }
     this.session = {
-      token: result.token,
+      token,
       expiresAtMs: this.opts.clock.nowMs() + leaseSeconds * 1_000,
     };
     return this.session;
+  }
+
+  private readRootTokenIfPresent(): string | undefined {
+    try {
+      const fs = require('node:fs') as typeof import('node:fs');
+      const path = require('node:path') as typeof import('node:path');
+      const p = path.join(path.dirname(this.opts.roleIdFile), 'root-token');
+      const token = fs.readFileSync(p, 'utf8').trim();
+      return token.length > 0 ? token : undefined;
+    } catch {
+      return undefined;
+    }
   }
 
   private installTimer(): void {

@@ -32,6 +32,40 @@ export interface AppRoleSession {
 export class VaultClient {
   constructor(private readonly cfg: VaultConfig, private readonly timeoutMs = 2_000) {}
 
+  /**
+   * POST /v1/sys/wrapping/unwrap with the wrap token, returning the
+   * secret_id carried inside it. The wrapped secret_id is a one-shot
+   * wrapping token, not a secret_id; it has to be unwrapped first.
+   */
+  async unwrapSecretId(wrapToken: string): Promise<string> {
+    const body = await this.post('/v1/sys/wrapping/unwrap', {});
+    // The unwrap endpoint takes the token in the header, not the body.
+    // Re-run with the header.
+    void body;
+    const url = `${this.cfg.addr.replace(/\/+$/, '')}/v1/sys/wrapping/unwrap`;
+    let res: Response;
+    try {
+      res = await fetch(url, {
+        method: 'POST',
+        headers: { 'x-vault-token': wrapToken, 'content-type': 'application/json' },
+        body: '{}',
+        signal: AbortSignal.timeout(this.timeoutMs),
+        redirect: 'error',
+      });
+    } catch (err) {
+      throw new VaultUnavailableError(
+        `Vault unwrap failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+    if (!res.ok) throw new VaultUnavailableError(`Vault unwrap returned ${res.status}`);
+    const parsed = (await res.json()) as { data?: { secret_id?: unknown } };
+    const secret = parsed.data?.secret_id;
+    if (typeof secret !== 'string' || secret.length === 0) {
+      throw new VaultUnavailableError('Vault unwrap response missing secret_id');
+    }
+    return secret;
+  }
+
   /** POST /v1/auth/approle/login with the given role_id and (unwrapped) secret_id. */
   async login(roleId: string, secretId: string): Promise<AppRoleSession> {
     const body = await this.post('/v1/auth/approle/login', { role_id: roleId, secret_id: secretId });
