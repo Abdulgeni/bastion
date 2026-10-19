@@ -1,4 +1,6 @@
 import type { Clock, MetricsService } from '@bastion/common';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { VaultClient, VaultUnavailableError } from './vault.client';
 
 /** Marker error the controller uses to translate to 503. */
@@ -124,10 +126,9 @@ export class KeyHolder {
 
   private readRootTokenIfPresent(): string | undefined {
     try {
-      const fs = require('node:fs') as typeof import('node:fs');
-      const path = require('node:path') as typeof import('node:path');
-      const p = path.join(path.dirname(this.opts.roleIdFile), 'root-token');
-      const token = fs.readFileSync(p, 'utf8').trim();
+      const varDir = process.env.BASTION_VAR_DIR ?? '/var/bastion';
+      const p = join(varDir, 'vault', 'root-token');
+      const token = readFileSync(p, 'utf8').trim();
       return token.length > 0 ? token : undefined;
     } catch {
       return undefined;
