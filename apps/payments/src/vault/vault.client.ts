@@ -87,7 +87,7 @@ export class VaultClient {
       throw new RangeError('bytes must be an integer between 1 and 4096');
     }
     const path = `/v1/sys/tools/random/${bytes}`;
-    const res = await this.request(path, { method: 'GET', headers: { 'x-vault-token': token } });
+    const res = await this.request(path, { method: 'POST', headers: { 'x-vault-token': token } });
     const parsed = res as RandomResponse;
     const hex = parsed.data?.random_bytes;
     if (typeof hex !== 'string' || !/^[0-9a-f]*$/.test(hex) || hex.length !== bytes * 2) {
