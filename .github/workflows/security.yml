@@ -183,3 +183,76 @@ jobs:
         with:
           sarif_file: semgrep.sarif
         continue-on-error: true
+
+  # ------------------------------------------------------------------
+  # Container image scan via Trivy, run per app in parallel.
+  # Gate: CRITICAL only. HIGH-and-below visible in the SARIF upload but
+  # do not fail — that is the same severity policy as the dependency scan.
+  # ignore-unfixed skips CVEs with no available fix (they cannot be acted
+  # on, and blocking on them trains people to ignore the pipeline).
+  # ------------------------------------------------------------------
+  container-scan:
+    name: Container scan (Trivy, ${{ matrix.app }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        app: [edge, orders, inventory, payments]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build ${{ matrix.app }} image
+        run: docker build -f apps/${{ matrix.app }}/Dockerfile -t bastion-${{ matrix.app }}:${{ github.sha }} .
+      - name: Scan ${{ matrix.app }} image
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: bastion-${{ matrix.app }}:${{ github.sha }}
+          format: sarif
+          output: trivy-${{ matrix.app }}.sarif
+          severity: CRITICAL
+          exit-code: "1"
+          ignore-unfixed: true
+          vuln-type: os,library
+      - name: Upload SARIF (${{ matrix.app }})
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-${{ matrix.app }}.sarif
+          category: trivy-${{ matrix.app }}
+
+  # ------------------------------------------------------------------
+  # IaC scan: Dockerfiles and k8s manifests. Catches misconfigurations
+  # before deployment: running as root, privileged containers, missing
+  # resource limits, allowing plaintext ports where STRICT mTLS is
+  # expected.
+  # Gate: HIGH and CRITICAL. This is stricter than the container gate
+  # because IaC misconfigurations are almost always fixable in the repo
+  # itself, unlike upstream CVEs.
+  # ------------------------------------------------------------------
+  iac-scan:
+    name: IaC scan (Trivy config)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Scan Dockerfiles and k8s manifests
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: config
+          scan-ref: .
+          format: sarif
+          output: trivy-iac.sarif
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+      - name: Upload SARIF (IaC)
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-iac.sarif
+          category: trivy-iac
