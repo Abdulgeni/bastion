@@ -15,6 +15,9 @@ export function makeFakeVaultClient(bytesPerCall = 32): VaultClient {
     async login(): Promise<{ token: string; leaseDurationSeconds: number }> {
       return { token: 'fake-token', leaseDurationSeconds: 3_600 };
     },
+    async unwrapSecretId(): Promise<string> {
+      return 'test-unwrapped-secret-id';
+    },
     async randomBytes(): Promise<Buffer> {
       n += 1;
       // Deterministic but varying per call, so rotation changes the fingerprint.

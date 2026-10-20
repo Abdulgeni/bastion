@@ -1,6 +1,6 @@
 import type { Clock, MetricsService } from '@bastion/common';
 import { readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 import { VaultClient, VaultUnavailableError } from './vault.client';
 
 /** Marker error the controller uses to translate to 503. */

@@ -1,4 +1,7 @@
 import { FakeClock } from '../../../../libs/bastion-common/src/clock/clock';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { KeyHolder, VAULT_UNAVAILABLE_MESSAGE } from './key-holder';
 import { VaultUnavailableError, type VaultClient } from './vault.client';
 
@@ -12,6 +15,9 @@ class FakeVault implements Pick<VaultClient, 'login' | 'randomBytes'> {
   async login(): Promise<{ token: string; leaseDurationSeconds: number }> {
     return { token: 'tok', leaseDurationSeconds: 3_600 };
   }
+  async unwrapSecretId(): Promise<string> {
+    return 'unwrapped-' + this.calls;
+  }
   async randomBytes(): Promise<Buffer> {
     if (this.fail) throw new VaultUnavailableError('boom');
     const r = this.responses[this.calls % this.responses.length];
@@ -20,6 +26,9 @@ class FakeVault implements Pick<VaultClient, 'login' | 'randomBytes'> {
   }
 }
 
+// Each test uses a tmpdir for BASTION_VAR_DIR with no root-token file,
+// so readRootTokenIfPresent returns undefined and the AppRole+unwrap path
+// (which the fake implements) is exercised.
 function setup(
   opts: {
     fail?: boolean;
@@ -28,6 +37,8 @@ function setup(
   } = {},
 ) {
   const clock = new FakeClock(NOW);
+  const emptyDir = mkdtempSync(join(tmpdir(), 'bastion-kh-'));
+  process.env.BASTION_VAR_DIR = emptyDir;
   const vault = new FakeVault(opts.responses ?? [Buffer.alloc(32, 0xaa)]);
   vault.fail = opts.fail === true;
   const registrations: Array<() => number | undefined> = [];

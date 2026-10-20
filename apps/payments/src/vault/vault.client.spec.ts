@@ -78,11 +78,12 @@ describe('VaultClient.randomBytes', () => {
   it('requests the byte count in the path and decodes hex', async () => {
     await withServer(
       (req, res) => {
-        expect(req.method).toBe('GET');
+        expect(req.method).toBe('POST');
         expect(req.url).toBe('/v1/sys/tools/random/8');
         expect(req.headers['x-vault-token']).toBe('tok');
         res.writeHead(200, { 'content-type': 'application/json' });
-        res.end(JSON.stringify({ data: { random_bytes: 'deadbeef00ffeedd' } }));
+        // 8 bytes base64-encoded
+        res.end(JSON.stringify({ data: { random_bytes: Buffer.from('deadbeef00ffeedd', 'hex').toString('base64') } }));
       },
       async (addr) => {
         const bytes = await new VaultClient(cfg(addr)).randomBytes('tok', 8);
@@ -95,11 +96,12 @@ describe('VaultClient.randomBytes', () => {
     await withServer(
       (_, res) => {
         res.writeHead(200, { 'content-type': 'application/json' });
-        res.end(JSON.stringify({ data: { random_bytes: 'deadbeef' } }));
+        // 6 bytes base64-encoded
+        res.end(JSON.stringify({ data: { random_bytes: Buffer.from('deadbeef00ff', 'hex').toString('base64') } }));
       },
       async (addr) => {
         await expect(new VaultClient(cfg(addr)).randomBytes('tok', 8)).rejects.toThrow(
-          /unexpected shape/,
+          /expected 8/,
         );
       },
     );
