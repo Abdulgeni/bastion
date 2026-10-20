@@ -12,3 +12,8 @@ var/
 # Demo directory from an early manual gen-certs run, superseded by var/.
 # Any var*/ directory must be gitignored from the moment it exists.
 var2/
+
+# Gitleaks JSON reports — contain the findings secrets in plaintext if
+# generated without --redact. Never track them.
+.gitleaks-report.json
+.gitleaks-*.json
