@@ -1,0 +1,21 @@
+# Gitleaks configuration for Bastion.
+#
+# Strategy: use the upstream default ruleset unchanged, and add exactly one
+# allowlist entry for the fixture directory. That fixture contains a
+# deliberately-fake AWS documentation key, used by the self-test step in
+# .github/workflows/security.yml to prove the scanner actually fires.
+#
+# Everything else in the repository (source, scripts, docs, k8s manifests,
+# Dockerfiles) is scanned with default rules. If this file grows to hold more
+# allowlists, each entry must cite why the path is a known false positive.
+
+title = "Bastion gitleaks config"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Test fixtures with intentionally fake, documented secrets."
+paths = [
+  '''tests/fixtures/.*''',
+]

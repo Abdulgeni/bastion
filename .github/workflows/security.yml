@@ -1,0 +1,144 @@
+name: security
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: security-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ------------------------------------------------------------------
+  # Secret scanning: two steps.
+  #   1. Scan the repository with default rules + .gitleaks.toml allowlist.
+  #      Fails the job on any finding.
+  #   2. Self-test: scan tests/fixtures/ with default rules, no allowlist,
+  #      and assert the scanner finds the known fake AWS key. This proves
+  #      the tool is configured correctly and is not a silent no-op.
+  # ------------------------------------------------------------------
+  secret-scan:
+    name: Secret scanning (Gitleaks)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Scan the repository
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_CONFIG: .gitleaks.toml
+
+      - name: Self-test — prove the scanner fires on the known fixture
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            -v "$PWD":/repo \
+            ghcr.io/gitleaks/gitleaks:v8.28.0 \
+            detect \
+              --source=/repo/tests/fixtures \
+              --no-git \
+              --report-format=json \
+              --report-path=/repo/.gitleaks-fixture-report.json \
+              --exit-code=0
+          node -e '
+            const fs = require("fs");
+            const path = ".gitleaks-fixture-report.json";
+            if (!fs.existsSync(path)) {
+              console.error("Self-test failed: no report written by Gitleaks.");
+              process.exit(1);
+            }
+            const report = JSON.parse(fs.readFileSync(path, "utf8"));
+            if (!Array.isArray(report) || report.length < 1) {
+              console.error("Self-test failed: Gitleaks found nothing in the fixture (scanner is not firing).");
+              process.exit(1);
+            }
+            const ruleIds = [...new Set(report.map(f => f.RuleID))];
+            console.log(`Self-test passed: ${report.length} finding(s), rule(s): ${ruleIds.join(", ")}.`);
+            if (!ruleIds.includes("aws-access-token")) {
+              console.error(`Self-test failed: expected rule "aws-access-token"; got ${ruleIds.join(", ")}.`);
+              process.exit(1);
+            }
+          '
+
+  # ------------------------------------------------------------------
+  # Dependency scanning: audit production dependencies only.
+  #   - HIGH and CRITICAL advisories fail the job.
+  #   - MODERATE and below are informational (logged, do not fail).
+  #   - Network / registry failures are distinguished from findings so the
+  #     job does not silently pass when pnpm could not reach the registry.
+  # ------------------------------------------------------------------
+  dependency-scan:
+    name: Dependency scanning (pnpm audit --prod)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.12.0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install (for a reproducible audit)
+        run: pnpm install --frozen-lockfile
+
+      - name: Audit production dependencies
+        run: |
+          set -euo pipefail
+          pnpm audit --prod --json > /tmp/pnpm-audit.json || true
+          node -e '
+            const fs = require("fs");
+            const path = "/tmp/pnpm-audit.json";
+            if (!fs.existsSync(path) || fs.statSync(path).size === 0) {
+              console.error("pnpm audit produced no output — likely a registry or network failure.");
+              process.exit(2);
+            }
+            let report;
+            try { report = JSON.parse(fs.readFileSync(path, "utf8")); }
+            catch (e) { console.error("pnpm audit produced non-JSON:", e.message); process.exit(2); }
+            if (report.error) {
+              console.error("pnpm audit reported an error:", report.error.summary || JSON.stringify(report.error));
+              process.exit(2);
+            }
+            const meta = (report.metadata && report.metadata.vulnerabilities) || {};
+            const critical = Number(meta.critical || 0);
+            const high = Number(meta.high || 0);
+            const moderate = Number(meta.moderate || 0);
+            const low = Number(meta.low || 0);
+            const info = Number(meta.info || 0);
+            const total = critical + high + moderate + low + info;
+            if (total === 0) {
+              console.log("Dependency scan passed: no known vulnerabilities in production dependencies.");
+              process.exit(0);
+            }
+            console.log(`Dependency scan: ${total} advisory(ies) — critical=${critical}, high=${high}, moderate=${moderate}, low=${low}, info=${info}.`);
+            if (critical + high > 0) {
+              const advisories = report.advisories ? Object.values(report.advisories) : [];
+              for (const a of advisories) {
+                if (a.severity === "high" || a.severity === "critical") {
+                  console.error(`  - ${a.module_name}: ${a.title} (${a.severity}) ${a.url || ""}`);
+                }
+              }
+              console.error(`Failing build: ${critical + high} HIGH or CRITICAL advisory(ies) in production dependencies.`);
+              process.exit(1);
+            }
+            console.log("No HIGH or CRITICAL advisories — build passes.");
+          '

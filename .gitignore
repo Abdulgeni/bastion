@@ -4,3 +4,7 @@ coverage/
 var/
 .env
 *.log
+
+# Gitleaks fixture self-test report
+.gitleaks-fixture-report.json
+.gitleaks-local.json
