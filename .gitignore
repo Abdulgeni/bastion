@@ -8,3 +8,7 @@ var/
 # Gitleaks fixture self-test report
 .gitleaks-fixture-report.json
 .gitleaks-local.json
+
+# Demo directory from an early manual gen-certs run, superseded by var/.
+# Any var*/ directory must be gitignored from the moment it exists.
+var2/

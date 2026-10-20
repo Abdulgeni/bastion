@@ -95,3 +95,51 @@ Each scanner runs independently — a finding in one does not stop the
 others. Exit code is 1 if any scanner fails, 0 if all pass. Requires
 Docker, node, and pnpm on the host; Gitleaks and Trivy run as containers
 so no host-installed scanners are needed.
+
+## Incident log
+
+### 2026-10-20 — CA private key found in git history
+
+**Discovery.** Running `make security-local` (Gitleaks) found five Ed25519
+private key files committed in the initial commit `7e2a3ee`:
+
+- `var2/ca/ca.key` (CA private key)
+- `var2/certs/edge/key.pem`
+- `var2/certs/orders/key.pem`
+- `var2/certs/inventory/key.pem`
+- `var2/certs/payments/key.pem`
+
+These came from an early manual test run of `scripts/gen-certs.ts` that
+wrote a second PKI tree at `var2/` before the `var/` layout was settled.
+That tree was not gitignored at the time and got committed with the first
+change to the repository.
+
+**Impact.** Anyone who clones the repository has those five private keys.
+`var2/ca/ca.key` can mint certificates that any service trusting the
+`var2` CA would accept.
+
+**Not impacted.** The running Compose stack uses `var/`, not `var2/`. The
+two CAs are independent. No live service trusts the `var2` CA, so the
+leaked keys grant no access to the running system.
+
+**Response.**
+
+1. `var2/` added to `.gitignore`, removed from disk.
+2. History purged with `git filter-repo --invert-paths --path var2/`. All
+   commits from the initial commit onward get new SHAs. Old objects remain
+   on GitHub's servers until garbage-collected but are no longer reachable
+   from any ref.
+3. CI's `secret-scan` job (Gitleaks) now scans the clean history. Zero
+   findings expected.
+4. The verifier wrapper in an earlier commit message ("0 findings locally
+   now") was incorrect: `make ... | tee` returns `tee`'s exit code, not
+   `make`'s. The scan did fail with 5 findings. Corrected by this incident
+   entry.
+
+**Prevention.**
+
+- Any directory matching `var*` must be added to `.gitignore` in the same
+  change that creates it. A defensive pattern (`var*/`) would have caught
+  this on day one.
+- `make security-local` is now a pre-push check. If it had existed on the
+  initial commit, the push would have been blocked.
