@@ -1,0 +1,95 @@
+# Defense-in-depth for clusters that don't run Istio (or as an extra layer
+# where they do). Every rule mirrors one line from Step 1's "Allowed
+# data-plane calls" list; anything else is denied.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: bastion
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: edge
+  namespace: bastion
+spec:
+  podSelector:
+    matchLabels: { app: edge }
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - ports: [{ port: 8080, protocol: TCP }]
+      from: []          # host-exposed data port
+    - ports: [{ port: 9090, protocol: TCP }]
+      from: []          # JWKS reachable from bastion namespace
+  egress:
+    - to:
+        - podSelector: { matchLabels: { app: orders } }
+      ports: [{ port: 8443, protocol: TCP }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: orders
+  namespace: bastion
+spec:
+  podSelector:
+    matchLabels: { app: orders }
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector: { matchLabels: { app: edge } }
+      ports: [{ port: 8443, protocol: TCP }]
+  egress:
+    - to:
+        - podSelector: { matchLabels: { app: inventory } }
+      ports: [{ port: 8444, protocol: TCP }]
+    - to:
+        - podSelector: { matchLabels: { app: payments } }
+      ports: [{ port: 8445, protocol: TCP }]
+    - to:
+        - podSelector: { matchLabels: { app: edge } }
+      ports: [{ port: 9090, protocol: TCP }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: inventory
+  namespace: bastion
+spec:
+  podSelector:
+    matchLabels: { app: inventory }
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector: { matchLabels: { app: orders } }
+      ports: [{ port: 8444, protocol: TCP }]
+  egress:
+    - to:
+        - podSelector: { matchLabels: { app: edge } }
+      ports: [{ port: 9090, protocol: TCP }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: payments
+  namespace: bastion
+spec:
+  podSelector:
+    matchLabels: { app: payments }
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector: { matchLabels: { app: orders } }
+      ports: [{ port: 8445, protocol: TCP }]
+  egress:
+    - to:
+        - podSelector: { matchLabels: { app: edge } }
+      ports: [{ port: 9090, protocol: TCP }]
+    # Vault: point at the external Vault service name; adjust if Vault runs
+    # in a different namespace.
+    - to:
+        - namespaceSelector: { matchLabels: { name: vault } }
+      ports: [{ port: 8200, protocol: TCP }]

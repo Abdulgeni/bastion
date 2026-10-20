@@ -1,0 +1,68 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: payments
+  namespace: bastion
+  labels: { app: payments }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: payments }
+  template:
+    metadata:
+      labels: { app: payments }
+      annotations:
+        # Vault Agent injection (see k8s/vault-agent/configmap.yaml for the
+        # rendered secrets). Requires the Vault Agent Injector webhook to be
+        # installed in the cluster. Our current payments app reads a root-token
+        # file from /var/bastion/vault/; switching to Vault Agent means reading
+        # from /vault/secrets/token instead. That's a code change to KeyHolder
+        # (out of Step 10's scope); the annotation below documents the target
+        # pattern for production.
+        vault.hashicorp.com/agent-inject: "true"
+        vault.hashicorp.com/role: "payments"
+        vault.hashicorp.com/agent-inject-secret-token: "auth/token/lookup-self"
+    spec:
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      containers:
+        - name: payments
+          image: bastion-payments:dev
+          imagePullPolicy: IfNotPresent
+          env:
+            - { name: SERVICE_NAME, value: payments }
+            - { name: NODE_ENV, value: production }
+            - { name: BASTION_VAR_DIR, value: /var/bastion }
+            - { name: DATA_BIND_ADDR, value: 0.0.0.0 }
+            - { name: MGMT_BIND_ADDR, value: 0.0.0.0 }
+            - { name: BASTION_TRUST_DOMAIN, value: bastion.local }
+            - { name: JWKS_URL, value: http://edge:9090/.well-known/jwks.json }
+            - { name: VAULT_ADDR, value: http://vault:8200 }
+            - { name: VAULT_KEY_TTL_SECONDS, value: "10" }
+          ports:
+            - { name: data, containerPort: 8445 }
+            - { name: mgmt, containerPort: 9093 }
+          volumeMounts:
+            - { name: var, mountPath: /var/bastion }
+          readinessProbe:
+            httpGet: { path: /healthz, port: mgmt }
+            initialDelaySeconds: 5
+          livenessProbe:
+            httpGet: { path: /healthz, port: mgmt }
+            initialDelaySeconds: 20
+      volumes:
+        - name: var
+          persistentVolumeClaim: { claimName: bastion-var }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: payments
+  namespace: bastion
+spec:
+  selector: { app: payments }
+  ports:
+    - { name: data, port: 8445, targetPort: data }
+    - { name: mgmt, port: 9093, targetPort: mgmt }

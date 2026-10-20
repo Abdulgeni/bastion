@@ -1,0 +1,44 @@
+# Vault Agent injection configuration for the payments Deployment.
+# Step 1's plan names this as "injector annotations + config ConfigMap".
+#
+# Our Compose setup uses AppRole + wrapped secret-id + a root-token file
+# (dev-mode). Vault Agent injection is the production path: the sidecar
+# authenticates to Vault via Kubernetes ServiceAccount JWT, fetches the
+# token, and writes it to /vault/secrets/token in the payments container.
+#
+# Switching to this pattern requires payments/KeyHolder to read its
+# token from /vault/secrets/token rather than from
+# /var/bastion/vault/root-token. That's a small code change (one method),
+# and is out of scope for Step 10 (which is deployment structure only).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vault-agent-payments
+  namespace: bastion
+data:
+  vault-agent-config.hcl: |
+    exit_after_auth = false
+    pid_file          = "/home/vault/.pid"
+
+    auto_auth {
+      method "kubernetes" {
+        mount_path = "auth/kubernetes"
+        config = {
+          role = "payments"
+        }
+      }
+      sink "file" {
+        config = {
+          path = "/vault/secrets/token"
+        }
+      }
+    }
+
+    template {
+      destination = "/vault/secrets/token"
+      contents    = <<EOT
+        {{- with secret "auth/token/lookup-self" -}}
+        {{ .Data.id }}
+        {{- end }}
+      EOT
+    }

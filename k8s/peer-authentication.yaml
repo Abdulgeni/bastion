@@ -1,0 +1,12 @@
+# Istio namespace-wide STRICT mTLS. Every data-plane and management-plane
+# connection inside the bastion namespace is mTLS, matching Compose's
+# internal-true mgmt network and forcing TLS on the mgmt plane as well
+# (which Compose does not).
+apiVersion: security.istio.io/v1
+kind: PeerAuthentication
+metadata:
+  name: default
+  namespace: bastion
+spec:
+  mtls:
+    mode: STRICT

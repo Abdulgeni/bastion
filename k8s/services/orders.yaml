@@ -1,0 +1,55 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: orders
+  namespace: bastion
+  labels: { app: orders }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: orders }
+  template:
+    metadata:
+      labels: { app: orders }
+    spec:
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      containers:
+        - name: orders
+          image: bastion-orders:dev
+          imagePullPolicy: IfNotPresent
+          env:
+            - { name: SERVICE_NAME, value: orders }
+            - { name: NODE_ENV, value: production }
+            - { name: BASTION_VAR_DIR, value: /var/bastion }
+            - { name: DATA_BIND_ADDR, value: 0.0.0.0 }
+            - { name: MGMT_BIND_ADDR, value: 0.0.0.0 }
+            - { name: BASTION_TRUST_DOMAIN, value: bastion.local }
+            - { name: JWKS_URL, value: http://edge:9090/.well-known/jwks.json }
+          ports:
+            - { name: data, containerPort: 8443 }
+            - { name: mgmt, containerPort: 9091 }
+          volumeMounts:
+            - { name: var, mountPath: /var/bastion }
+          readinessProbe:
+            httpGet: { path: /healthz, port: mgmt }
+            initialDelaySeconds: 5
+          livenessProbe:
+            httpGet: { path: /healthz, port: mgmt }
+            initialDelaySeconds: 20
+      volumes:
+        - name: var
+          persistentVolumeClaim: { claimName: bastion-var }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: orders
+  namespace: bastion
+spec:
+  selector: { app: orders }
+  ports:
+    - { name: data, port: 8443, targetPort: data }
+    - { name: mgmt, port: 9091, targetPort: mgmt }

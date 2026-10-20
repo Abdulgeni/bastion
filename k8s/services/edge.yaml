@@ -1,0 +1,56 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: edge
+  namespace: bastion
+  labels: { app: edge }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: edge }
+  template:
+    metadata:
+      labels: { app: edge }
+    spec:
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      containers:
+        - name: edge
+          image: bastion-edge:dev
+          imagePullPolicy: IfNotPresent
+          env:
+            - { name: SERVICE_NAME, value: edge }
+            - { name: NODE_ENV, value: production }
+            - { name: BASTION_VAR_DIR, value: /var/bastion }
+            - { name: DATA_BIND_ADDR, value: 0.0.0.0 }
+            - { name: MGMT_BIND_ADDR, value: 0.0.0.0 }
+            - { name: BASTION_TRUST_DOMAIN, value: bastion.local }
+          ports:
+            - { name: data, containerPort: 8080 }
+            - { name: mgmt, containerPort: 9090 }
+          volumeMounts:
+            - { name: var, mountPath: /var/bastion }
+          readinessProbe:
+            httpGet: { path: /healthz, port: mgmt }
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /healthz, port: mgmt }
+            initialDelaySeconds: 20
+            periodSeconds: 10
+      volumes:
+        - name: var
+          persistentVolumeClaim: { claimName: bastion-var }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: edge
+  namespace: bastion
+spec:
+  selector: { app: edge }
+  ports:
+    - { name: data, port: 8080, targetPort: data }
+    - { name: mgmt, port: 9090, targetPort: mgmt }

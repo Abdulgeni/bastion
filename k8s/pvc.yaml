@@ -1,0 +1,13 @@
+# The equivalent of Compose's bind-mounted ./var. bastion-init writes into
+# it; the four services mount it read-only at /var/bastion and read-write at
+# /var/bastion/audit.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: bastion-var
+  namespace: bastion
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 64Mi

@@ -1,0 +1,74 @@
+# The Compose call graph, in Istio primitives.
+#   default-deny for the namespace; then allow the exact edges Step 1 lists.
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: deny-all
+  namespace: bastion
+spec:
+  {}
+---
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: allow-edge-to-orders
+  namespace: bastion
+spec:
+  selector:
+    matchLabels: { app: orders }
+  action: ALLOW
+  rules:
+    - from:
+        - source:
+            principals: ["cluster.local/ns/bastion/sa/edge"]
+      to:
+        - operation: { ports: ["8443"] }
+---
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: allow-orders-to-inventory
+  namespace: bastion
+spec:
+  selector:
+    matchLabels: { app: inventory }
+  action: ALLOW
+  rules:
+    - from:
+        - source:
+            principals: ["cluster.local/ns/bastion/sa/orders"]
+      to:
+        - operation: { ports: ["8444"] }
+---
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: allow-orders-to-payments
+  namespace: bastion
+spec:
+  selector:
+    matchLabels: { app: payments }
+  action: ALLOW
+  rules:
+    - from:
+        - source:
+            principals: ["cluster.local/ns/bastion/sa/orders"]
+      to:
+        - operation: { ports: ["8445"] }
+---
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: allow-anyone-to-edge-jwks
+  namespace: bastion
+spec:
+  selector:
+    matchLabels: { app: edge }
+  action: ALLOW
+  rules:
+    # JWKS on 9090 is readable by every bastion service.
+    - to:
+        - operation: { ports: ["9090"] }
+      from:
+        - source:
+            namespaces: ["bastion"]

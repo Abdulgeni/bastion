@@ -1,0 +1,28 @@
+# Runs once per cluster bootstrap (or per `kubectl delete job bastion-init`
+# followed by re-apply). Generates CA + service certs + JWT signing keys
+# into the bastion-var PVC. Idempotent.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: bastion-init
+  namespace: bastion
+spec:
+  backoffLimit: 1
+  template:
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsUser: 0
+        fsGroup: 1000
+      containers:
+        - name: init
+          image: bastion-init:dev
+          workingDir: /repo
+          command: ["pnpm", "exec", "ts-node", "scripts/init.ts"]
+          env:
+            - { name: BASTION_VAR_DIR, value: /var/bastion }
+          volumeMounts:
+            - { name: var, mountPath: /var/bastion }
+      volumes:
+        - name: var
+          persistentVolumeClaim: { claimName: bastion-var }
