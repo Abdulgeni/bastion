@@ -24,13 +24,13 @@ API keys, tokens, private keys, passwords. Uses the upstream default ruleset
 (260+ patterns) extended only by `.gitleaks.toml` at the repository root.
 
 **Why the configuration is small.** `.gitleaks.toml` extends the default rules
-and adds exactly one allowlist entry — `tests/fixtures/`. Every other directory
+and adds exactly one allowlist entry — `security-fixtures/`. Every other directory
 is scanned with no exceptions. Adding more allowlist entries requires a
 documented reason in the file itself.
 
-**Self-test.** The workflow contains a step that scans `tests/fixtures/`
-*without* the allowlist and asserts that Gitleaks finds the AWS documentation
-example key stored there. If that self-test fails, the whole job fails. This
+**Self-test.** The workflow contains a step that scans `security-fixtures/`
+*without* the allowlist and asserts that Gitleaks finds the fake AWS key
+stored there. If that self-test fails, the whole job fails. This
 matters because a mis-configured Gitleaks silently finds nothing and looks
 green. The self-test proves the scanner is actually firing.
 
