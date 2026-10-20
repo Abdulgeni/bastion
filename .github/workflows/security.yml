@@ -19,7 +19,7 @@ jobs:
   # Secret scanning: two steps.
   #   1. Scan the repository with default rules + .gitleaks.toml allowlist.
   #      Fails the job on any finding.
-  #   2. Self-test: scan tests/fixtures/ with default rules, no allowlist,
+  #   2. Self-test: scan security-fixtures/ with default rules, no allowlist,
   #      and assert the scanner finds the known fake AWS key. This proves
   #      the tool is configured correctly and is not a silent no-op.
   # ------------------------------------------------------------------
@@ -46,7 +46,7 @@ jobs:
             -v "$PWD":/repo \
             ghcr.io/gitleaks/gitleaks:v8.28.0 \
             detect \
-              --source=/repo/tests/fixtures \
+              --source=/repo/security-fixtures \
               --no-git \
               --report-format=json \
               --report-path=/repo/.gitleaks-fixture-report.json \

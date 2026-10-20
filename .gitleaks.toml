@@ -17,5 +17,5 @@ useDefault = true
 [allowlist]
 description = "Test fixtures with intentionally fake, documented secrets."
 paths = [
-  '''tests/fixtures/.*''',
+  '''security-fixtures/.*''',
 ]
