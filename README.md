@@ -1,11 +1,11 @@
 <div align="center">
 
 <a href="https://github.com/Abdulgeni/bastion">
-  <img src="https://capsule-render.vercel.app/api?type=waving&color=gradient&height=220&section=header&text=Bastion&fontSize=100&fontColor=ffffff&animation=twinkling&fontAlignY=38&desc=Zero-Trust%20Service%20Mesh&descAlignY=60&descSize=22" alt="Bastion header" />
+  <img src="https://capsule-render.vercel.app/api?type=waving&color=gradient&height=220&section=header&text=Bastion&fontSize=100&fontColor=ffffff&animation=twinkling&fontAlignY=38&desc=Zero-Trust%20Service%20Mesh%20%2B%20Hardened%20CI%2FCD&descAlignY=60&descSize=20" alt="Bastion header" />
 </a>
 
 <a href="https://git.io/typing-svg">
-  <img src="https://readme-typing-svg.demolab.com?font=Fira+Code&weight=600&size=20&duration=3500&pause=800&color=667EEA&center=true&vCenter=true&multiline=true&width=850&height=140&lines=SPIFFE+mTLS+on+every+internal+hop;Ed25519+JWTs+with+single-use+replay+protection;Vault-derived+API+keys%2C+fail-closed;Four+end-to-end+demos%2C+all+green+%E2%9C%93;Five+networks%2C+zero+trust%2C+documented+gaps" alt="Typing SVG" />
+  <img src="https://readme-typing-svg.demolab.com?font=Fira+Code&weight=600&size=20&duration=3500&pause=800&color=667EEA&center=true&vCenter=true&multiline=true&width=850&height=140&lines=SPIFFE+mTLS+on+every+internal+hop;Ed25519+JWTs+with+single-use+replay+protection;Vault-derived+API+keys%2C+fail-closed;Four+end-to-end+demos%2C+all+green+%E2%9C%93;Five+security+scanners+gating+every+push" alt="Typing SVG" />
 </a>
 
 <br/>
@@ -13,7 +13,7 @@
 <img src="https://img.shields.io/badge/containers-5%20healthy-22c55e?style=for-the-badge&logo=docker&logoColor=white" alt="containers" />
 <img src="https://img.shields.io/badge/tests-296%20passing-22c55e?style=for-the-badge&logo=jest&logoColor=white" alt="tests" />
 <img src="https://img.shields.io/badge/demos-4%2F4%20passing-8b5cf6?style=for-the-badge" alt="demos" />
-<img src="https://img.shields.io/badge/NIST%20800--207-7%2F7%20tenets-6366f1?style=for-the-badge" alt="nist" />
+<img src="https://img.shields.io/badge/security%20jobs-5%20gating-ef4444?style=for-the-badge&logo=shieldsdotio&logoColor=white" alt="security" />
 
 <br/><br/>
 
@@ -25,13 +25,21 @@
 <img src="https://img.shields.io/badge/Vault-1.17-FFEC6E?style=for-the-badge&logo=vault&logoColor=black" alt="vault" />
 <img src="https://img.shields.io/badge/Ed25519-22c55e?style=for-the-badge" alt="ed25519" />
 
+<br/><br/>
+
+<img src="https://img.shields.io/badge/Gitleaks-secret%20scanning-ff6b6b?style=for-the-badge" alt="gitleaks" />
+<img src="https://img.shields.io/badge/Semgrep-SAST-00c853?style=for-the-badge" alt="semgrep" />
+<img src="https://img.shields.io/badge/Trivy-container%20%2B%20IaC-2496ED?style=for-the-badge" alt="trivy" />
+<img src="https://img.shields.io/badge/pnpm%20audit-SCA-f69220?style=for-the-badge&logo=pnpm&logoColor=white" alt="audit" />
+<img src="https://img.shields.io/badge/SARIF-GitHub%20Security-181717?style=for-the-badge&logo=github&logoColor=white" alt="sarif" />
+
 </div>
 
 ---
 
 <div align="center">
 
-### 🌐 [Overview](#-overview) · 🏛 [Architecture](#-architecture) · ✨ [Features](#-features) · 🚀 [Quick Start](#-quick-start) · 🎬 [Demos](#-demos) · 🔒 [Security](#-security-model) · 📚 [Docs](#-documentation)
+### 🌐 [Overview](#-overview) · 🏛 [Architecture](#-architecture) · ✨ [Features](#-features) · 🚀 [Quick Start](#-quick-start) · 🎬 [Demos](#-demos) · 🔒 [Security](#-security-model) · 🛡 [Security Pipeline](#-security-pipeline) · 📚 [Docs](#-documentation)
 
 </div>
 
@@ -43,7 +51,9 @@
 
 Four services (`edge`, `orders`, `inventory`, `payments`) run **locally in Docker Compose** across five networks, and the same topology is **documented for Kubernetes + Istio**.
 
-> ⚠️ **This is not a production system.** It is a working, end-to-end demonstration of the seven [NIST SP 800-207](https://csrc.nist.gov/pubs/sp/800/207/final) zero-trust tenets, with every gap documented in [`docs/architecture.md`](docs/architecture.md).
+On top of the mesh, Bastion ships a **hardened CI/CD pipeline** with five security scanners — secret scanning, dependency scanning, SAST, container image scanning, and IaC scanning — all **failing the build on real findings**. The pipeline is not a badge: it has caught two real incidents (leaked CA keys, leaked diagnostic file), both of which are documented in [`docs/security.md`](docs/security.md) with their responses.
+
+> ⚠️ **This is not a production system.** It is a working, end-to-end demonstration of the seven [NIST SP 800-207](https://csrc.nist.gov/pubs/sp/800/207/final) zero-trust tenets, plus a real DevSecOps practice, with every gap documented in [`docs/architecture.md`](docs/architecture.md).
 
 ---
 
@@ -208,6 +218,14 @@ make demo-stolen-jwt      # three attack tokens are rejected
 make demo-vault-rotation  # Vault key rotates, no key leak
 ```
 
+### Run the security checks locally
+
+```bash
+make security-local       # Gitleaks + pnpm audit (fast, ~20s)
+SCAN_CONTAINERS=1 make security-local   # + Trivy container scan (opt-in, Linux-fast)
+SCAN_IAC=1 make security-local          # + Trivy IaC scan (opt-in, Linux-fast)
+```
+
 ### Stop
 
 ```bash
@@ -263,30 +281,103 @@ Full analysis: [`docs/architecture.md`](docs/architecture.md).
 
 ---
 
+## 🛡 Security Pipeline
+
+A hardened CI/CD pipeline runs on every push and pull request against `main`. **Five scanners, five gates, all failing the build on real findings.** Every finding is uploaded as SARIF to the repository's **Security** tab, not buried in a job log.
+
+### The five jobs
+
+| Job | Tool | Blocks on | Why |
+|---|---|---|---|
+| 🔍 **secret-scan** | Gitleaks + self-test | Any detected secret | Secrets in git history are permanent; the self-test proves the scanner actually fires (a broken scanner that returns green is worse than no scanner) |
+| 📦 **dependency-scan** | `pnpm audit --prod` | HIGH or CRITICAL advisory | CVEs in production deps ship in containers; dev-dep CVEs attack the developer's laptop, not the system |
+| 🧪 **sast** | Semgrep (3 community rulesets + 3 custom) | ERROR severity finding | Code-level flaws caught before review; custom rules (`bastion-no-eval`, `bastion-no-shell-exec-with-nonliteral-command`, `bastion-no-hardcoded-crypto-key`) encode the project's own policy |
+| 🐳 **container-scan** | Trivy (per app, matrix) | CRITICAL CVE | OS and library CVEs in the shipped image; `ignore-unfixed` because blocking on unactionable findings trains people to ignore the pipeline |
+| ☸️ **iac-scan** | Trivy config | HIGH or CRITICAL misconfiguration | Dockerfile and k8s misconfigurations are always fixable in the repo, so the threshold is stricter than the container gate |
+
+### What it has caught
+
+<details>
+<summary><b>Two real incidents, documented in <a href="docs/security.md">docs/security.md</a></b></summary>
+
+<br/>
+
+**Incident 1 — leaked CA private key in git history (found by `make security-local`).** The initial commit contained five Ed25519 private keys under `var2/` — the CA signing key plus all four service keys. Response: removed from disk, added to `.gitignore`, purged from history with `git filter-repo`, force-pushed, documented with impact, non-impact, response, and prevention.
+
+**Incident 2 — leaked diagnostic file (found by the same scan, re-run).** A `.gitleaks-report.json` generated during a diagnostic — **without `--redact`** — contained the raw secret values. It was committed by an undiscriminating `git add -A`. Response: removed, `.gitignore` hardened against every gitleaks report, history purged again, force-pushed, documented.
+
+Both incidents have entries in the incident log with the discovery, impact, non-impact, response, and prevention. The second entry notes that the *first response was incomplete* — a diagnostic file written after the first purge still contained the raw findings. This is what real incident response looks like: a pipeline that catches its own first fix.
+
+</details>
+
+### Gating policy
+
+Every scanner has a documented threshold with the reasoning behind it in [`docs/security.md`](docs/security.md), including:
+
+- **`pnpm audit --prod`** distinguishes network failures (exit 2, "registry unreachable") from vulnerability findings (exit 1, "HIGH or CRITICAL advisory").
+- **Gitleaks self-test** scans the fixture with default rules and no allowlist, asserting the `aws-access-token` rule fires. If the self-test fails, the job fails — this catches a mis-configured scanner that would otherwise return green.
+- **Severity thresholds** differ per scanner because they should: SAST gates on ERROR only (WARNING is noise), container gates on CRITICAL only (HIGH is often unactionable), IaC gates on HIGH+CRITICAL (always fixable).
+
+### Running the pipeline locally
+
+```bash
+make security-local
+```
+
+Runs Gitleaks and `pnpm audit` in about 20 seconds. Both Trivy scans are opt-in via `SCAN_CONTAINERS=1` and `SCAN_IAC=1` because on Docker Desktop for Windows they're 15+ minutes; on Ubuntu CI they're 2 minutes. The authoritative run is CI.
+
+### What the pipeline verifies vs. what it doesn't
+
+- ✅ Every secret committed to the repo (full history).
+- ✅ Every HIGH/CRITICAL CVE in production dependencies.
+- ✅ Every code path matching the three custom Semgrep rules + community rulesets.
+- ✅ Every CRITICAL CVE in the shipped container images.
+- ✅ Every HIGH/CRITICAL misconfiguration in Dockerfiles and k8s manifests.
+- ❌ Runtime behavior — that's what the 296 tests and 4 demos do.
+
+---
+
 ## 📂 Project Structure
 
 ```
 bastion/
+├── .github/
+│   └── workflows/
+│       ├── ci.yml             typecheck + lint + test + shell syntax
+│       └── security.yml       5 security jobs (see above)
 ├── apps/
-│   ├── edge/           user login, JWT issuance, forward to orders
-│   ├── orders/         orchestrates inventory + payments
-│   ├── inventory/      in-memory stock ledger
-│   └── payments/       Vault-derived API key, HMAC receipts
+│   ├── edge/                  user login, JWT issuance, forward to orders
+│   ├── orders/                orchestrates inventory + payments
+│   ├── inventory/             in-memory stock ledger
+│   └── payments/              Vault-derived API key, HMAC receipts
 ├── libs/bastion-common/
-│   ├── mtls/           server-auth + mTLS option builders
-│   ├── identity/       SPIFFE parsing, PeerIdentityGuard
-│   ├── jwt/            claims, issuer, verifier, JWKS cache, replay cache
-│   ├── audit/          structured events, trace IDs
-│   ├── metrics/        4 Prometheus metrics
-│   ├── auth/           JwtAuthGuard, @RequireScope
-│   └── management/     /healthz, /metrics, /.well-known/jwks.json
-├── scripts/            gen-certs, rotate-certs, mint-rogue-certs,
-│                       rotate-jwt, forge-token, init, vault-bootstrap
-├── demos/              4 end-to-end scripts
-├── docker/             init image, rogue image
-├── k8s/                Kubernetes + Istio manifests (documented target)
-├── tests/              cross-service e2e test
-└── var/                generated runtime material (gitignored)
+│   ├── mtls/                  server-auth + mTLS option builders
+│   ├── identity/              SPIFFE parsing, PeerIdentityGuard
+│   ├── jwt/                   claims, issuer, verifier, JWKS cache, replay cache
+│   ├── audit/                 structured events, trace IDs
+│   ├── metrics/               4 Prometheus metrics
+│   ├── auth/                  JwtAuthGuard, @RequireScope
+│   └── management/            /healthz, /metrics, /.well-known/jwks.json
+├── scripts/
+│   ├── gen-certs.ts           dev CA + per-service Ed25519 certs
+│   ├── rotate-certs.ts        re-issue every service cert
+│   ├── mint-rogue-certs.ts    attacker credentials for the rogue demo
+│   ├── rotate-jwt.ts          JWT signing key rotation
+│   ├── forge-token.ts         test-only: signed with chosen aud, tamper helper
+│   ├── init.ts                phase A: all key material into var/
+│   ├── vault-bootstrap.sh     phase B: AppRole, policy, wrapped secret-id
+│   ├── vault-reauth.sh        re-issue the wrapped secret-id
+│   └── security-local.sh      fast local security runner
+├── demos/                     four end-to-end demo scripts
+├── docker/                    init image, rogue image
+├── k8s/                       Kubernetes + Istio manifests (documented target)
+├── tests/                     cross-service e2e test + fixtures
+├── docs/
+│   ├── architecture.md        NIST tenets, trust boundaries, F1–F8 flaws, gaps
+│   └── security.md            gating policy + incident log
+├── .gitleaks.toml             Gitleaks config (extends defaults, one allowlist)
+├── semgrep.yml                three Bastion-specific SAST rules
+└── var/                       generated runtime material (gitignored)
 ```
 
 ---
@@ -314,7 +405,7 @@ pnpm typecheck && pnpm lint && pnpm test
 | 📊 Audit + metrics | Field redaction, control chars, sink failures |
 | 🌐 e2e | Real mTLS + real JWTs + real JWKS, 4 services, 4 scenarios |
 
-CI runs on Ubuntu 24.04 (`.github/workflows/ci.yml`). POSIX mode tests run there.
+CI runs both `ci.yml` and `security.yml` on Ubuntu 24.04. POSIX mode tests run there.
 
 ---
 
@@ -326,8 +417,10 @@ CI runs on Ubuntu 24.04 (`.github/workflows/ci.yml`). POSIX mode tests run there
 |---|---|
 | 📖 [README.md](README.md) | This file |
 | 🏛 [docs/architecture.md](docs/architecture.md) | NIST tenets, trust boundaries, F1–F8 flaws, gaps |
+| 🛡 [docs/security.md](docs/security.md) | Scanner gating policy, hygiene observations, incident log |
 | ☸️ [k8s/README.md](k8s/README.md) | Compose → Kubernetes mapping, apply order |
-| 🤖 [.github/workflows/ci.yml](.github/workflows/ci.yml) | The GitHub Actions workflow |
+| 🤖 [.github/workflows/ci.yml](.github/workflows/ci.yml) | The `ci.yml` workflow |
+| 🔍 [.github/workflows/security.yml](.github/workflows/security.yml) | The security workflow |
 
 </div>
 
@@ -396,9 +489,11 @@ make ci
 </td>
 <td valign="top">
 
-### 🆘 Help
+### 🛡 Security
 ```bash
-make help
+make security-local
+SCAN_CONTAINERS=1 make security-local
+SCAN_IAC=1 make security-local
 ```
 
 </td>
@@ -410,9 +505,9 @@ make help
 <div align="center">
 
 <a href="https://github.com/Abdulgeni/bastion">
-  <img src="https://capsule-render.vercel.app/api?type=waving&color=gradient&height=120&section=footer&text=Built%20with%20%E2%9D%A4%EF%B8%8F%20for%20zero-trust&fontSize=24&fontColor=ffffff&animation=twinkling" alt="Bastion footer" />
+  <img src="https://capsule-render.vercel.app/api?type=waving&color=gradient&height=120&section=footer&text=Zero-trust%20mesh%20%C2%B7%20DevSecOps%20pipeline&fontSize=22&fontColor=ffffff&animation=twinkling" alt="Bastion footer" />
 </a>
 
-**Bastion** · [architecture](docs/architecture.md) · [k8s](k8s/README.md) · [CI](.github/workflows/ci.yml)
+**Bastion** · [architecture](docs/architecture.md) · [security](docs/security.md) · [k8s](k8s/README.md) · [CI](.github/workflows/ci.yml)
 
 </div>
