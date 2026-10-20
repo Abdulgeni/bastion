@@ -142,3 +142,44 @@ jobs:
             }
             console.log("No HIGH or CRITICAL advisories — build passes.");
           '
+
+  # ------------------------------------------------------------------
+  # SAST via Semgrep. Runs the community rules (p/ci, p/typescript,
+  # p/nodejs) plus the three Bastion-specific rules in semgrep.yml.
+  # Gate: any ERROR-severity finding fails the job. Warnings are visible
+  # in the SARIF upload but do not block.
+  # ------------------------------------------------------------------
+  sast:
+    name: Static analysis (Semgrep)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Semgrep
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            -v "$PWD:/src" \
+            -w /src \
+            semgrep/semgrep:latest \
+            semgrep \
+              --config=p/ci \
+              --config=p/typescript \
+              --config=p/nodejs \
+              --config=./semgrep.yml \
+              --severity=ERROR \
+              --error \
+              --sarif \
+              --output=semgrep.sarif \
+              --verbose
+
+      - name: Upload SARIF to the GitHub Security tab
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: semgrep.sarif
+        continue-on-error: true

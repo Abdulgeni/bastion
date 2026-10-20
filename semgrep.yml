@@ -1,0 +1,64 @@
+# Bastion-specific Semgrep rules.
+#
+# These run in addition to the community rulesets (p/ci, p/typescript,
+# p/nodejs) that the CI job pulls in. Each rule is scoped to something the
+# project has decided is unacceptable: dynamic code execution, shell exec
+# with a non-literal command, and hardcoded cryptographic keys.
+#
+# Severity is ERROR for all three: a finding blocks the build.
+
+rules:
+  - id: bastion-no-eval
+    patterns:
+      - pattern-either:
+          - pattern: eval(...)
+          - pattern: new Function(...)
+    message: >-
+      Dynamic code execution (eval, new Function) is not allowed in Bastion.
+      Use a fixed function reference or a lookup table instead.
+    languages: [typescript, javascript]
+    severity: ERROR
+    metadata:
+      category: security
+      cwe: "CWE-95: Improper Neutralization of Directives in Dynamically Evaluated Code"
+      references:
+        - https://owasp.org/www-community/attacks/Code_Injection
+
+  - id: bastion-no-shell-exec-with-nonliteral-command
+    patterns:
+      - pattern-either:
+          - pattern: |
+              $CP.exec($CMD, ...)
+          - pattern: |
+              $CP.execSync($CMD, ...)
+          - pattern: |
+              $CP.spawn($CMD, ...)
+      - metavariable-pattern:
+          metavariable: $CMD
+          patterns:
+            - pattern-not: |
+                "..."
+    message: >-
+      child_process.exec/spawn with a non-literal command may allow command
+      injection. Use execFile with an array of arguments, or build the
+      command from a fixed allowlist.
+    languages: [typescript, javascript]
+    severity: ERROR
+    metadata:
+      category: security
+      cwe: "CWE-78: OS Command Injection"
+
+  - id: bastion-no-hardcoded-crypto-key
+    patterns:
+      - pattern-either:
+          - pattern: $CIPHER.createCipheriv($ALG, "...", ...)
+          - pattern: $CRYPTO.createHmac($ALG, "...")
+    message: >-
+      Hardcoded cryptographic key material. Keys must come from a
+      RandomSource or a key store, never inlined. See
+      docs/architecture.md ("Deterministic builds").
+    languages: [typescript, javascript]
+    severity: ERROR
+    metadata:
+      category: security
+      cwe: "CWE-321: Use of Hard-coded Cryptographic Key"
