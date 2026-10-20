@@ -84,3 +84,14 @@ Semgrep (Step 13) and Trivy (Step 14) join `security.yml` as separate jobs.
 - **`pino-pretty` is a devDependency at the root** but `pino` is a runtime
   dependency of `libs/bastion-common`. That is correct: `pino-pretty` is only
   used for human-readable development logs.
+
+## Running locally with `make security-local` (Step 15)
+
+Every scanner that runs in CI can be run on the host before pushing:
+
+```bash
+make security-local
+Each scanner runs independently — a finding in one does not stop the
+others. Exit code is 1 if any scanner fails, 0 if all pass. Requires
+Docker, node, and pnpm on the host; Gitleaks and Trivy run as containers
+so no host-installed scanners are needed.

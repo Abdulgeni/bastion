@@ -107,3 +107,7 @@ typecheck: ## TypeScript check.
 
 ci: typecheck lint test ## All checks. This is what Step 9's GitHub Action runs.
 	@echo "ci: ok"
+
+.PHONY: security-local
+security-local: ## Run every CI security scanner on the host before pushing.
+	bash scripts/security-local.sh
