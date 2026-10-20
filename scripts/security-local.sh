@@ -11,8 +11,10 @@ MSYS_NO_PATHCONV=1 export MSYS_NO_PATHCONV
 require docker node pnpm
 
 say "Secret scan (Gitleaks, full repo and history)"
-if docker run --rm -v "$PWD":/repo ghcr.io/gitleaks/gitleaks:v8.28.0 \
-     detect --source=/repo --redact --no-banner; then
+if docker run --rm -v "$PWD":/repo \
+       -e GITLEAKS_CONFIG=/repo/.gitleaks.toml \
+       ghcr.io/gitleaks/gitleaks:v8.28.0 \
+       detect --source=/repo --redact --no-banner --verbose; then
   ok "no secrets found"
 else
   bad "secrets found (see above)"
