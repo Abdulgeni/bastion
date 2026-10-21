@@ -1,0 +1,23 @@
+# Files and directories excluded from Semgrep's scan. Each entry has a reason
+# and was reviewed when added. Adding new entries requires a documented
+# rationale; a silent skip is worse than a false positive.
+
+# GitHub Actions workflows use `run: |` with ${{ ... }} interpolation on
+# values that are not user-controlled (commit SHAs, workflow refs). The
+# `yaml.github-actions.security.run-shell-injection` rule cannot distinguish
+# safe interpolation from unsafe, so it fires on every real workflow file.
+.github/workflows/
+
+# The local security runner mounts /var/run/docker.sock into Trivy so it can
+# scan the images built by this repo. That is the intended way to give Trivy
+# access to the Docker daemon without installing it on the host. The
+# `dockerfile.security.dockerd-socket-mount` rule flags that pattern, but here
+# the alternative (bind-mounting every image tarball) is slower and less
+# convenient without improving security.
+scripts/security-local.sh
+
+# Token forging is a test-only and demo-only tool. It deliberately constructs
+# JWT payloads from attacker-controlled data so the demos can prove the
+# verifier rejects tampered tokens. Code-string-concat warnings here are the
+# point of the tool, not a bug in it.
+scripts/forge-token.ts
